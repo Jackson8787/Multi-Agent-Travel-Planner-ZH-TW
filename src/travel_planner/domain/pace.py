@@ -51,4 +51,4 @@ PACE_PROFILES = {
 
 
 def get_pace_profile(level: PaceLevel) -> PaceProfile:
-    return PACE_PROFILES[level]
+    return PACE_PROFILES[level].model_copy(deep=True)

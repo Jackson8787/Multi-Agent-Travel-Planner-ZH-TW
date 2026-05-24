@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 from travel_planner.domain.pace import PaceProfile
 
@@ -12,6 +12,24 @@ class PriceStatus(StrEnum):
     USER_CONFIRMED_OFFICIAL_SOURCE = "USER_CONFIRMED_OFFICIAL_SOURCE"
     API_VERIFIED_RANGE = "API_VERIFIED_RANGE"
     MISSING_PRICE = "MISSING_PRICE"
+
+
+class RateType(StrEnum):
+    INDICATIVE_MIDPOINT = "INDICATIVE_MIDPOINT"
+
+
+class PlaceLoadTag(StrEnum):
+    FLEXIBLE_VISIT = "FLEXIBLE_VISIT"
+    FULL_DAY_HIGH_LOAD = "FULL_DAY_HIGH_LOAD"
+    LONG_VISIT = "LONG_VISIT"
+    DAY_TRIP = "DAY_TRIP"
+
+
+class DayPlanStatus(StrEnum):
+    DRAFT = "DRAFT"
+    VALIDATING = "VALIDATING"
+    APPROVED = "APPROVED"
+    NEEDS_MANUAL_REVIEW = "NEEDS_MANUAL_REVIEW"
 
 
 class PriceRecord(BaseModel):
@@ -27,27 +45,57 @@ class PriceRecord(BaseModel):
     source_url: HttpUrl | None = None
     retrieved_at: datetime | None = None
 
+    @model_validator(mode="after")
+    def validate_amount_shape(self) -> "PriceRecord":
+        exact_statuses = {
+            PriceStatus.API_VERIFIED_EXACT,
+            PriceStatus.USER_CONFIRMED_OFFICIAL_SOURCE,
+        }
+        has_range = self.amount_original_min is not None or self.amount_original_max is not None
+
+        if self.status in exact_statuses:
+            if (
+                self.amount_original is None
+                or self.amount_original < 0
+                or has_range
+            ):
+                raise ValueError("exact prices require one non-negative exact amount")
+        elif self.status == PriceStatus.API_VERIFIED_RANGE:
+            if (
+                self.amount_original is not None
+                or self.amount_original_min is None
+                or self.amount_original_max is None
+                or self.amount_original_min < 0
+                or self.amount_original_max < 0
+                or self.amount_original_min > self.amount_original_max
+            ):
+                raise ValueError("range prices require ordered non-negative bounds only")
+        elif self.amount_original is not None or has_range:
+            raise ValueError("missing prices cannot contain amounts")
+
+        return self
+
 
 class ExchangeRateSnapshot(BaseModel):
     provider: str
     base_currency: str
     target_currency: str
-    rate: Decimal
+    rate: Decimal = Field(gt=0)
     retrieved_at: datetime
-    rate_type: str = "INDICATIVE_MIDPOINT"
+    rate_type: RateType = RateType.INDICATIVE_MIDPOINT
 
 
 class PlaceStop(BaseModel):
     name: str
     place_id: str | None = None
     locked: bool = False
-    load_tag: str = "FLEXIBLE_VISIT"
+    load_tag: PlaceLoadTag = PlaceLoadTag.FLEXIBLE_VISIT
 
 
 class TripSpec(BaseModel):
     destination: str
     days: int = Field(ge=1, le=5)
-    budget_amount: Decimal
+    budget_amount: Decimal = Field(ge=0)
     budget_currency: str = "TWD"
     interests: list[str]
     pace: PaceProfile
@@ -59,16 +107,16 @@ class TripSpec(BaseModel):
 
 
 class RouteEvidence(BaseModel):
-    total_required_transfer_minutes: int
-    max_single_transfer_minutes: int
-    walking_distance_km: float
+    total_required_transfer_minutes: int = Field(ge=0)
+    max_single_transfer_minutes: int = Field(ge=0)
+    walking_distance_km: float = Field(ge=0)
     encoded_polyline: str | None = None
     source_provider: str = "Google Routes API"
 
 
 class DayPlanState(BaseModel):
     day: int
-    status: str = "DRAFT"
+    status: DayPlanStatus = DayPlanStatus.DRAFT
     places: list[PlaceStop] = Field(default_factory=list)
     meals: list[PlaceStop] = Field(default_factory=list)
     route: RouteEvidence | None = None
