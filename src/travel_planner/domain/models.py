@@ -33,6 +33,23 @@ class DayPlanStatus(StrEnum):
     NEEDS_MANUAL_REVIEW = "NEEDS_MANUAL_REVIEW"
 
 
+class ConflictType(StrEnum):
+    PACE_EXCEEDED = "PACE_EXCEEDED"
+    BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
+    PRICE_MISSING = "PRICE_MISSING"
+    GROUNDING_FAILED = "GROUNDING_FAILED"
+
+
+class UserChoice(StrEnum):
+    KEEP_PACE_REPLAN = "KEEP_PACE_REPLAN"
+    ACCEPT_PACE_WARNING = "ACCEPT_PACE_WARNING"
+    INCREASE_DAY_PACE = "INCREASE_DAY_PACE"
+    INCREASE_BUDGET_KEEP_PLAN = "INCREASE_BUDGET_KEEP_PLAN"
+    KEEP_LOCKED_REDUCE_COST = "KEEP_LOCKED_REDUCE_COST"
+    REPLACE_ITEMS_KEEP_BUDGET = "REPLACE_ITEMS_KEEP_BUDGET"
+    ACCEPT_COST_WARNING = "ACCEPT_COST_WARNING"
+
+
 class PriceRecord(BaseModel):
     item_id: str
     item_name: str
@@ -148,3 +165,17 @@ class DayPlanState(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     retry_count: int = Field(default=0, ge=0)
     quality_score: int | None = None
+
+
+class ConflictEvent(BaseModel):
+    conflict_type: ConflictType
+    day: int = Field(ge=1)
+    reasons: list[str] = Field(default_factory=list)
+    evidence: dict[str, object] = Field(default_factory=dict)
+    status: str = "AWAITING_USER_DECISION"
+
+
+class UserDecision(BaseModel):
+    choice: UserChoice
+    new_budget_limit: Decimal | None = None
+    new_pace: PaceProfile | None = None
