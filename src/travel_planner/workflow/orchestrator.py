@@ -23,6 +23,7 @@ from travel_planner.domain.models import (
 from travel_planner.domain.pace import PaceLevel, get_pace_profile
 from travel_planner.integrations.google_places import GroundingNotFound
 from travel_planner.integrations.google_routes import RouteResult, RouteUnavailable
+from travel_planner.observability.tracing import NoOpTracer
 from travel_planner.validation.budget import BudgetStatus, evaluate_budget
 from travel_planner.validation.pace import PaceStatus, evaluate_pace
 
@@ -276,7 +277,7 @@ class TravelWorkflow:
         self.routes = routes
         self.price_collector = price_collector
         self.reviewer = reviewer
-        self.tracer = tracer
+        self.tracer = tracer or NoOpTracer()
         self.current_day: DayPlanState | None = None
         self.replanning_constraints: list[str] = []
         self.pending_warnings: list[str] = []
@@ -301,6 +302,7 @@ class TravelWorkflow:
             self.replanning_constraints.append(f"REJECT_PLACE:{error.query}")
             failed = DayPlanState(day=day, retry_count=retries, warnings=["GROUNDING_FAILED"])
             self.current_day = failed
+            self.tracer.event("grounding_failed", {"day": day, "query": error.query, "retry": retries})
             if retries >= 2:
                 return WorkflowResult(status=WorkflowStatus.NEEDS_MANUAL_REVIEW, day_state=failed)
             return self.start_day(day)
@@ -322,6 +324,10 @@ class TravelWorkflow:
             self.replanning_constraints.append(f"REJECT_ROUTE:{error.reason}")
             self.current_day.retry_count = retries
             self.current_day.warnings.append("ROUTE_UNAVAILABLE")
+            self.tracer.event(
+                "route_unavailable",
+                {"day": self.current_day.day, "reason": error.reason, "retry": retries},
+            )
             if retries >= 2:
                 self.current_day.status = DayPlanStatus.NEEDS_MANUAL_REVIEW
                 return WorkflowResult(
@@ -372,6 +378,10 @@ class TravelWorkflow:
             reasons=reasons,
             evidence={"phase": phase, "route": self.current_day.route.model_dump()},
         )
+        self.tracer.event(
+            "pace_conflict",
+            {"day": self.current_day.day, "reasons": reasons, "phase": phase},
+        )
         return WorkflowResult(
             status=WorkflowStatus.AWAITING_PACE_DECISION,
             day_state=self.current_day,
@@ -401,6 +411,14 @@ class TravelWorkflow:
                 reasons=[outcome.status.value],
                 evidence=outcome.model_dump(),
             )
+            self.tracer.event(
+                "budget_conflict",
+                {
+                    "day": self.current_day.day,
+                    "status": outcome.status.value,
+                    "missing_item_ids": outcome.missing_item_ids,
+                },
+            )
             return WorkflowResult(
                 status=(
                     WorkflowStatus.AWAITING_PRICE_DECISION
@@ -421,6 +439,10 @@ class TravelWorkflow:
         return WorkflowResult(status=WorkflowStatus.DAY_APPROVED, day_state=self.current_day)
 
     def resume(self, decision: UserDecision) -> WorkflowResult:
+        self.tracer.event(
+            "user_decision",
+            {"day": self.current_day.day, "choice": decision.choice.value},
+        )
         if decision.choice is UserChoice.INCREASE_BUDGET_KEEP_PLAN:
             if decision.new_budget_limit is None:
                 raise ValueError("new_budget_limit is required for a budget increase")
