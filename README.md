@@ -1,4 +1,4 @@
-# Multi-Agent Travel Planner 🌍
+# Multi-Agent Travel Planner
 
 > 基於大型語言模型 (LLM) 與多代理人 (Multi-Agent) 協作的智能旅遊規劃系統。
 
