@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PaceLevel(StrEnum):
@@ -12,10 +12,10 @@ class PaceLevel(StrEnum):
 
 class PaceProfile(BaseModel):
     level: PaceLevel
-    max_major_places_per_day: int
-    max_required_transfer_minutes_per_day: int
-    max_single_transfer_minutes: int
-    walking_distance_warning_km: float
+    max_major_places_per_day: int = Field(ge=1)
+    max_required_transfer_minutes_per_day: int = Field(ge=0)
+    max_single_transfer_minutes: int = Field(ge=0)
+    walking_distance_warning_km: float = Field(ge=0)
 
 
 PACE_PROFILES = {

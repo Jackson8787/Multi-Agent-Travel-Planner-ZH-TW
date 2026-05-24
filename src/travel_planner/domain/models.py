@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Annotated
 
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
@@ -103,7 +104,7 @@ class TripSpec(BaseModel):
     must_visit: list[PlaceStop] = Field(default_factory=list)
     prices: list[PriceRecord] = Field(default_factory=list)
     fx_snapshot: ExchangeRateSnapshot | None = None
-    budget_override_history: list[Decimal] = Field(default_factory=list)
+    budget_override_history: list[Annotated[Decimal, Field(ge=0)]] = Field(default_factory=list)
 
 
 class RouteEvidence(BaseModel):
@@ -113,14 +114,20 @@ class RouteEvidence(BaseModel):
     encoded_polyline: str | None = None
     source_provider: str = "Google Routes API"
 
+    @model_validator(mode="after")
+    def validate_single_transfer_within_total(self) -> "RouteEvidence":
+        if self.max_single_transfer_minutes > self.total_required_transfer_minutes:
+            raise ValueError("single transfer minutes cannot exceed the route total")
+        return self
+
 
 class DayPlanState(BaseModel):
-    day: int
+    day: int = Field(ge=1)
     status: DayPlanStatus = DayPlanStatus.DRAFT
     places: list[PlaceStop] = Field(default_factory=list)
     meals: list[PlaceStop] = Field(default_factory=list)
     route: RouteEvidence | None = None
     prices: list[PriceRecord] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
-    retry_count: int = 0
+    retry_count: int = Field(default=0, ge=0)
     quality_score: int | None = None

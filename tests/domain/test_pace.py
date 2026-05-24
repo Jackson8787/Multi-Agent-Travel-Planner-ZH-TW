@@ -13,7 +13,7 @@ from travel_planner.domain.models import (
     RouteEvidence,
     TripSpec,
 )
-from travel_planner.domain.pace import PaceLevel, get_pace_profile
+from travel_planner.domain.pace import PaceLevel, PaceProfile, get_pace_profile
 
 
 @pytest.mark.parametrize(
@@ -59,6 +59,41 @@ def test_returned_pace_profile_cannot_mutate_the_registered_preset():
     )
     assert override.max_major_places_per_day == 1
     assert get_pace_profile(PaceLevel.RELAXED).max_major_places_per_day == 2
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"max_major_places_per_day": 0},
+        {"max_required_transfer_minutes_per_day": -1},
+        {"max_single_transfer_minutes": -1},
+        {"walking_distance_warning_km": -0.1},
+    ],
+)
+def test_pace_profile_rejects_invalid_override_thresholds(overrides):
+    fields = {
+        "level": PaceLevel.RELAXED,
+        "max_major_places_per_day": 2,
+        "max_required_transfer_minutes_per_day": 90,
+        "max_single_transfer_minutes": 35,
+        "walking_distance_warning_km": 6,
+    }
+    fields.update(overrides)
+
+    with pytest.raises(ValidationError):
+        PaceProfile(**fields)
+
+
+def test_pace_profile_accepts_valid_user_override():
+    override = PaceProfile(
+        level=PaceLevel.RELAXED,
+        max_major_places_per_day=1,
+        max_required_transfer_minutes_per_day=60,
+        max_single_transfer_minutes=20,
+        walking_distance_warning_km=3,
+    )
+
+    assert override.max_required_transfer_minutes_per_day == 60
 
 
 def test_verified_price_keeps_source_and_original_currency():
@@ -177,6 +212,19 @@ def test_trip_budget_requires_non_negative_amount():
         )
 
 
+def test_trip_budget_override_history_requires_non_negative_amounts():
+    with pytest.raises(ValidationError):
+        TripSpec(
+            destination="Osaka",
+            days=5,
+            budget_amount=25000,
+            interests=[],
+            pace=get_pace_profile(PaceLevel.RELAXED),
+            hotel=PlaceStop(name="Hotel"),
+            budget_override_history=[Decimal("25000"), Decimal("-1")],
+        )
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -195,6 +243,24 @@ def test_route_evidence_rejects_negative_quantities(overrides):
 
     with pytest.raises(ValidationError):
         RouteEvidence(**fields)
+
+
+def test_route_evidence_rejects_single_transfer_longer_than_total():
+    with pytest.raises(ValidationError):
+        RouteEvidence(
+            total_required_transfer_minutes=30,
+            max_single_transfer_minutes=31,
+            walking_distance_km=1,
+        )
+
+
+@pytest.mark.parametrize("overrides", [{"day": 0}, {"retry_count": -1}])
+def test_day_plan_state_rejects_invalid_counters(overrides):
+    fields = {"day": 1, "retry_count": 0}
+    fields.update(overrides)
+
+    with pytest.raises(ValidationError):
+        DayPlanState(**fields)
 
 
 def test_closed_state_fields_are_typed_enums():
