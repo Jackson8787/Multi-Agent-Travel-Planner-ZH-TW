@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3", "pytest-mock>=3.14", "ruff>=0.6"]
+dev = ["pytest>=8.3", "pytest-httpx>=0.30", "pytest-mock>=3.14", "ruff>=0.6"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/travel_planner"]
