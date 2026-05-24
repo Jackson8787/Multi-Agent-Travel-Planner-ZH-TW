@@ -1353,7 +1353,7 @@ class TravelWorkflow:
         if decision.choice is UserChoice.INCREASE_BUDGET_KEEP_PLAN:
             if decision.new_budget_limit is None:
                 raise ValueError("new_budget_limit is required for a budget increase")
-            self.trip_spec.budget_override_history.append(decision.new_budget_limit)
+            self.trip_spec.add_budget_override(decision.new_budget_limit)
             self.current_day.warnings.append("USER_APPROVED_BUDGET_INCREASE")
             return self._review_and_commit_without_replanning()
         if decision.choice is UserChoice.KEEP_PACE_REPLAN:

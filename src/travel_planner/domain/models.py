@@ -3,7 +3,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import BaseModel, Field, HttpUrl, ValidationError, model_validator
 
 from travel_planner.domain.pace import PaceProfile
 
@@ -105,6 +105,23 @@ class TripSpec(BaseModel):
     prices: list[PriceRecord] = Field(default_factory=list)
     fx_snapshot: ExchangeRateSnapshot | None = None
     budget_override_history: list[Annotated[Decimal, Field(ge=0)]] = Field(default_factory=list)
+
+    def add_budget_override(self, new_limit: Decimal) -> None:
+        validated_limit = Decimal(new_limit)
+        if validated_limit < 0:
+            raise ValidationError.from_exception_data(
+                self.__class__.__name__,
+                [
+                    {
+                        "type": "greater_than_equal",
+                        "loc": ("budget_override_history",),
+                        "msg": "Input should be greater than or equal to 0",
+                        "input": validated_limit,
+                        "ctx": {"ge": 0},
+                    }
+                ],
+            )
+        self.budget_override_history.append(validated_limit)
 
 
 class RouteEvidence(BaseModel):

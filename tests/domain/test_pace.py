@@ -96,6 +96,17 @@ def test_pace_profile_accepts_valid_user_override():
     assert override.max_required_transfer_minutes_per_day == 60
 
 
+def test_pace_profile_rejects_single_transfer_over_daily_total():
+    with pytest.raises(ValidationError):
+        PaceProfile(
+            level=PaceLevel.RELAXED,
+            max_major_places_per_day=1,
+            max_required_transfer_minutes_per_day=20,
+            max_single_transfer_minutes=21,
+            walking_distance_warning_km=3,
+        )
+
+
 def test_verified_price_keeps_source_and_original_currency():
     price = PriceRecord(
         item_id="usj-ticket",
@@ -223,6 +234,35 @@ def test_trip_budget_override_history_requires_non_negative_amounts():
             hotel=PlaceStop(name="Hotel"),
             budget_override_history=[Decimal("25000"), Decimal("-1")],
         )
+
+
+def test_trip_spec_add_budget_override_rejects_negative_amount():
+    trip = TripSpec(
+        destination="Osaka",
+        days=5,
+        budget_amount=25000,
+        interests=[],
+        pace=get_pace_profile(PaceLevel.RELAXED),
+        hotel=PlaceStop(name="Hotel"),
+    )
+
+    with pytest.raises(ValidationError):
+        trip.add_budget_override(Decimal("-1"))
+
+
+def test_trip_spec_add_budget_override_appends_valid_amount():
+    trip = TripSpec(
+        destination="Osaka",
+        days=5,
+        budget_amount=25000,
+        interests=[],
+        pace=get_pace_profile(PaceLevel.RELAXED),
+        hotel=PlaceStop(name="Hotel"),
+    )
+
+    trip.add_budget_override(Decimal("28000"))
+
+    assert trip.budget_override_history == [Decimal("28000")]
 
 
 @pytest.mark.parametrize(

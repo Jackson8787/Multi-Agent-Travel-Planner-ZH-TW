@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PaceLevel(StrEnum):
@@ -16,6 +16,12 @@ class PaceProfile(BaseModel):
     max_required_transfer_minutes_per_day: int = Field(ge=0)
     max_single_transfer_minutes: int = Field(ge=0)
     walking_distance_warning_km: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_single_transfer_within_daily_total(self) -> "PaceProfile":
+        if self.max_single_transfer_minutes > self.max_required_transfer_minutes_per_day:
+            raise ValueError("single transfer minutes cannot exceed the daily transfer total")
+        return self
 
 
 PACE_PROFILES = {
