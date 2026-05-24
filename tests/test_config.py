@@ -21,6 +21,21 @@ def test_settings_do_not_require_observability_credentials(monkeypatch):
     assert settings.langfuse_enabled is False
 
 
+def test_settings_do_not_enable_observability_for_blank_credentials(monkeypatch):
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "maps")
+    monkeypatch.setenv("EXCHANGE_RATE_API_KEY", "fx")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com/")
+    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "gpt-demo")
+    monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", " ")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "\t")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.langfuse_enabled is False
+
+
 @pytest.mark.parametrize(
     "field_name",
     [
