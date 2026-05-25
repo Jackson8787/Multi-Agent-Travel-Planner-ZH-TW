@@ -74,3 +74,18 @@ def test_settings_reject_invalid_langfuse_host():
             azure_openai_api_version="2024-10-21",
             langfuse_host="not a url",
         )
+
+
+def test_settings_accept_langfuse_base_url_alias(monkeypatch):
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "maps")
+    monkeypatch.setenv("EXCHANGE_RATE_API_KEY", "fx")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com/")
+    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "gpt-demo")
+    monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://jp.cloud.langfuse.com")
+    monkeypatch.delenv("LANGFUSE_HOST", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert str(settings.langfuse_host) == "https://jp.cloud.langfuse.com/"

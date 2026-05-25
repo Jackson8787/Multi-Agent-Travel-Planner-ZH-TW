@@ -1,9 +1,9 @@
-from pydantic import HttpUrl, SecretStr, field_validator
+from pydantic import AliasChoices, Field, HttpUrl, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     google_maps_api_key: SecretStr
     exchange_rate_api_key: SecretStr
@@ -13,7 +13,10 @@ class Settings(BaseSettings):
     azure_openai_api_version: str
     langfuse_public_key: SecretStr | None = None
     langfuse_secret_key: SecretStr | None = None
-    langfuse_host: HttpUrl = HttpUrl("https://cloud.langfuse.com")
+    langfuse_host: HttpUrl = Field(
+        default=HttpUrl("https://cloud.langfuse.com"),
+        validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
+    )
 
     @field_validator(
         "google_maps_api_key",
