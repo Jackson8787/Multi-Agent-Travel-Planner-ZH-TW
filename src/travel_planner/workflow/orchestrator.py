@@ -375,7 +375,12 @@ class TravelWorkflow:
             return route_result
 
         self.current_day.route = route_result.evidence
-        initial = evaluate_pace(self.current_day.places, route_result.evidence, self.trip_spec.pace)
+        initial = evaluate_pace(
+            self.current_day.places,
+            route_result.evidence,
+            self.trip_spec.pace,
+            walking_preference=self.trip_spec.walking_preference,
+        )
         if initial.status is PaceStatus.CONFLICT:
             return self._pause_for_pace(initial.reasons, "initial_route")
 
@@ -394,6 +399,7 @@ class TravelWorkflow:
             self.current_day.places,
             full_route_result.evidence,
             self.trip_spec.pace,
+            walking_preference=self.trip_spec.walking_preference,
         )
         if final.status is PaceStatus.CONFLICT:
             return self._pause_for_pace(final.reasons, "restaurant_included_final_route")

@@ -2,7 +2,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from travel_planner.domain.models import PlaceLoadTag, PlaceStop, RouteEvidence
+from travel_planner.domain.models import PlaceLoadTag, PlaceStop, RouteEvidence, WalkingPreference
 from travel_planner.domain.pace import PaceProfile
 
 
@@ -18,7 +18,10 @@ class PaceOutcome(BaseModel):
 
 
 def evaluate_pace(
-    places: list[PlaceStop], route: RouteEvidence, profile: PaceProfile
+    places: list[PlaceStop],
+    route: RouteEvidence,
+    profile: PaceProfile,
+    walking_preference: WalkingPreference = WalkingPreference.NORMAL,
 ) -> PaceOutcome:
     reasons: list[str] = []
 
@@ -33,6 +36,16 @@ def evaluate_pace(
 
     if reasons:
         return PaceOutcome(status=PaceStatus.CONFLICT, reasons=reasons)
-    if route.walking_distance_km > profile.walking_distance_warning_km:
-        return PaceOutcome(status=PaceStatus.WARNING, reasons=["walking_distance_warning"])
+
+    base_km = profile.walking_distance_warning_km
+    if walking_preference is WalkingPreference.SHORT_WALK_ONLY:
+        if route.walking_distance_km > base_km * 0.5:
+            return PaceOutcome(status=PaceStatus.CONFLICT, reasons=["walking_distance_short_walk_only"])
+    elif walking_preference is WalkingPreference.PREFER_WALKING:
+        if route.walking_distance_km > base_km * 1.5:
+            return PaceOutcome(status=PaceStatus.WARNING, reasons=["walking_distance_warning"])
+    else:
+        if route.walking_distance_km > base_km:
+            return PaceOutcome(status=PaceStatus.WARNING, reasons=["walking_distance_warning"])
+
     return PaceOutcome(status=PaceStatus.PASSED)

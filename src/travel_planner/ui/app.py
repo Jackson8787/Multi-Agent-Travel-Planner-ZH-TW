@@ -410,9 +410,16 @@ def render_decision_gate(workflow: TravelWorkflow, result: WorkflowResult) -> No
     st.warning(f"衝突類型：{conflict.conflict_type.value}")
 
     if conflict.conflict_type is ConflictType.PACE_EXCEEDED:
-        observed = int(result.day_state.route.total_required_transfer_minutes) if result.day_state.route else 0
-        limit = workflow.trip_spec.pace.max_required_transfer_minutes_per_day
-        st.write(format_pace_conflict(observed, limit))
+        if "walking_distance_short_walk_only" in conflict.reasons:
+            observed_km = result.day_state.route.walking_distance_km if result.day_state.route else 0
+            limit_km = workflow.trip_spec.pace.walking_distance_warning_km * 0.5
+            st.write(
+                f"此日步行距離 {observed_km:.1f} km，超過「僅短距離步行」模式上限 {limit_km:.1f} km。"
+            )
+        else:
+            observed = int(result.day_state.route.total_required_transfer_minutes) if result.day_state.route else 0
+            limit = workflow.trip_spec.pace.max_required_transfer_minutes_per_day
+            st.write(format_pace_conflict(observed, limit))
         if st.button("維持目前節奏並重新規劃", key="keep-pace"):
             _resume_workflow(workflow, UserDecision(choice=UserChoice.KEEP_PACE_REPLAN))
         if st.button("接受這天較累", key="accept-pace"):
