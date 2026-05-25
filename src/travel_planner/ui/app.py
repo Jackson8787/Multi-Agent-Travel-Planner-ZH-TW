@@ -396,6 +396,8 @@ def render_running_or_evidence(workflow: TravelWorkflow, result: WorkflowResult)
         left.metric("必要移動", f"{route.total_required_transfer_minutes} 分")
         right.metric("最長單段", f"{route.max_single_transfer_minutes} 分")
         extra.metric("步行距離", f"{route.walking_distance_km:.1f} km")
+        if "drive fallback" in route.source_provider:
+            st.warning("此段無可取得的大眾運輸路線，已改用駕車估算。路線時間僅供參考，實際通勤時間請另行確認。")
 
 
 def render_decision_gate(workflow: TravelWorkflow, result: WorkflowResult) -> None:
@@ -482,6 +484,8 @@ def render_approved_itinerary(settings: Settings, workflow: TravelWorkflow, resu
             f"交通方式：{ROUTE_MODE_LABELS[workflow.trip_spec.route_mode]} | "
             f"步行偏好：{WALKING_PREFERENCE_LABELS[workflow.trip_spec.walking_preference]}"
         )
+        if "drive fallback" in route.source_provider:
+            st.warning("此段無可取得的大眾運輸路線，已改用駕車估算。路線時間僅供參考，實際通勤時間請另行確認。")
 
     st.subheader("費用證據")
     for price in workflow.trip_spec.prices + result.day_state.prices:
