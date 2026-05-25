@@ -32,3 +32,13 @@ def test_build_range_error_uses_currency_unit():
     spec = RangeFieldSpec(label="住宿預算", minimum=0, maximum=150000, step=1000, unit="NTD")
 
     assert build_range_error(spec) == "住宿預算必須介於 0 到 150,000 NTD。"
+
+
+def test_budget_specs_match_product_bounds():
+    from travel_planner.ui.app import DAYS_SPEC, LODGING_BUDGET_SPEC, TOTAL_BUDGET_SPEC
+
+    assert DAYS_SPEC == RangeFieldSpec(label="旅遊天數", minimum=1, maximum=10, step=1)
+    assert TOTAL_BUDGET_SPEC.minimum == 1000
+    assert TOTAL_BUDGET_SPEC.maximum == 300000
+    assert LODGING_BUDGET_SPEC.minimum == 0
+    assert LODGING_BUDGET_SPEC.maximum == 150000

@@ -27,6 +27,7 @@ from travel_planner.integrations.exchange_rates import ExchangeRateClient
 from travel_planner.integrations.google_places import GooglePlacesClient, GroundingNotFound
 from travel_planner.integrations.google_routes import GoogleRoutesClient, RouteResult
 from travel_planner.observability.tracing import LangfuseTracer, NoOpTracer
+from travel_planner.ui.form_state import RangeFieldSpec, coerce_range_value
 from travel_planner.ui.map_component import render_verified_route_map
 from travel_planner.validation.budget import evaluate_budget
 from travel_planner.workflow.orchestrator import TravelWorkflow, WorkflowResult, WorkflowStatus
@@ -50,6 +51,10 @@ SESSION_RESULT = "workflow_result"
 SESSION_SETTINGS = "settings"
 SESSION_ERROR = "settings_error"
 
+DAYS_SPEC = RangeFieldSpec(label="旅遊天數", minimum=1, maximum=10, step=1)
+TOTAL_BUDGET_SPEC = RangeFieldSpec(label="總預算", minimum=1000, maximum=300000, step=1000, unit="NTD")
+LODGING_BUDGET_SPEC = RangeFieldSpec(label="住宿預算", minimum=0, maximum=150000, step=1000, unit="NTD")
+
 
 class LivePriceCollector:
     def collect(self, day_state: DayPlanState, route_result: RouteResult) -> list[PriceRecord]:
@@ -68,33 +73,87 @@ def format_price_source(original_price: str, provider: str) -> str:
     return f"{original_price} | 資料來源：{provider}"
 
 
+def _render_synced_range_input(
+    label: str,
+    *,
+    spec: RangeFieldSpec,
+    slider_key: str,
+    input_key: str,
+    default: int,
+) -> int | Decimal:
+    _require_streamlit()
+    slider_value = st.slider(
+        label,
+        min_value=spec.minimum,
+        max_value=spec.maximum,
+        value=st.session_state.get(slider_key, default),
+        step=spec.step,
+        key=slider_key,
+    )
+    input_value = st.number_input(
+        f"{label}（輸入）",
+        min_value=spec.minimum,
+        max_value=spec.maximum,
+        value=st.session_state.get(input_key, slider_value),
+        step=spec.step,
+        key=input_key,
+    )
+    coerced = coerce_range_value(input_value, spec)
+    st.session_state[slider_key] = int(coerced) if isinstance(coerced, Decimal) and spec.unit is None else int(coerced) if isinstance(coerced, int) else int(coerced)
+    st.session_state[input_key] = float(coerced) if isinstance(coerced, Decimal) else coerced
+    return coerced
+
+
 def render_trip_spec_form() -> None:
     _require_streamlit()
     st.header("旅程需求")
-    with st.form("trip_spec"):
-        col1, col2 = st.columns(2)
-        with col1:
+    left, right = st.columns([1, 1.2])
+    with left:
+        with st.form("trip_spec"):
             destination = st.text_input("目的地", value="Osaka")
-            days = st.slider("旅遊天數", min_value=1, max_value=5, value=5)
-            budget_amount = st.text_input("總預算", value="25000")
+            days = _render_synced_range_input(
+                "旅遊天數",
+                spec=DAYS_SPEC,
+                slider_key="trip-days-slider",
+                input_key="trip-days-input",
+                default=5,
+            )
+            budget_amount = _render_synced_range_input(
+                "總預算",
+                spec=TOTAL_BUDGET_SPEC,
+                slider_key="budget-total-slider",
+                input_key="budget-total-input",
+                default=25000,
+            )
+            lodging_budget_amount = _render_synced_range_input(
+                "住宿預算",
+                spec=LODGING_BUDGET_SPEC,
+                slider_key="budget-lodging-slider",
+                input_key="budget-lodging-input",
+                default=8000,
+            )
             budget_currency = st.selectbox("預算幣別", options=["TWD"], index=0)
             interests = st.text_input("興趣", value="anime, food")
-        with col2:
             hotel_name = st.text_input("住宿名稱", value="Hotel Monterey Grasmere Osaka")
             hotel_price = st.text_input("住宿總價 (JPY)", value="38000")
             hotel_price_url = st.text_input("住宿官方或訂房來源 URL")
             must_visit_name = st.text_input("必去景點", value="Universal Studios Japan")
             must_visit_price = st.text_input("必去景點價格 (JPY)", value="8600")
             must_visit_price_url = st.text_input("必去景點官方價格 URL")
+            st.caption(f"目前住宿預算：NTD {int(lodging_budget_amount):,}")
 
-        pace_level = st.radio(
-            "旅遊節奏",
-            options=list(PaceLevel),
-            format_func=lambda value: f"{PACE_LABELS[value]}: {PACE_DESCRIPTIONS[value]}",
-            index=1,
-        )
+            pace_level = st.radio(
+                "旅遊節奏",
+                options=list(PaceLevel),
+                format_func=lambda value: f"{PACE_LABELS[value]}: {PACE_DESCRIPTIONS[value]}",
+                index=1,
+            )
 
-        submitted = st.form_submit_button("開始規劃")
+            submitted = st.form_submit_button("開始規劃")
+
+    with right:
+        st.subheader("地圖預覽")
+        st.info("輸入目的地後，這裡會顯示城市、住宿候補與必去景點預覽。")
 
     if not submitted:
         return
@@ -104,8 +163,8 @@ def render_trip_spec_form() -> None:
         trip_spec = _build_trip_spec(
             settings=settings,
             destination=destination,
-            days=days,
-            budget_amount=budget_amount,
+            days=int(days),
+            budget_amount=str(budget_amount),
             budget_currency=budget_currency,
             interests=interests,
             pace_level=pace_level,
