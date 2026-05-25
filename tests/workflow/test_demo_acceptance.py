@@ -5,6 +5,7 @@ from pydantic import HttpUrl, SecretStr
 from travel_planner.agents.runner import FoodProposal
 from travel_planner.config import Settings
 from travel_planner.domain.models import PlaceStop, PriceRecord, PriceStatus, UserChoice, UserDecision
+from travel_planner.domain.models import RouteMode, WalkingPreference
 from travel_planner.domain.pace import PaceLevel
 from travel_planner.ui.app import _build_trip_spec_from_preflight
 from travel_planner.workflow.orchestrator import (
@@ -30,7 +31,17 @@ class CountingAgents:
             ]
         )
 
-    def propose_itinerary(self, destination, pace_name, visited, rejected):
+    def propose_itinerary(
+        self,
+        destination,
+        pace_name,
+        visited,
+        rejected,
+        must_visit,
+        remaining_slots,
+        route_mode,
+        walking_preference,
+    ):
         self.itinerary_calls += 1
 
         class Proposal:
@@ -149,6 +160,8 @@ def test_preflight_trip_spec_keeps_selected_hotel_before_workflow(monkeypatch):
         budget_currency="TWD",
         interests="anime, food",
         pace_level=PaceLevel.RELAXED,
+        route_mode=RouteMode.AUTO,
+        walking_preference=WalkingPreference.NORMAL,
         selected_hotel=PlaceStop(name="Hotel Monterey", place_id="hotel-1"),
         grounded_must_visit=[PlaceStop(name="Dotonbori", place_id="poi-1")],
         must_visit_name="Dotonbori",

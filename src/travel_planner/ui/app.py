@@ -17,9 +17,11 @@ from travel_planner.domain.models import (
     PlaceStop,
     PriceRecord,
     PriceStatus,
+    RouteMode,
     TripSpec,
     UserChoice,
     UserDecision,
+    WalkingPreference,
 )
 from travel_planner.domain.pace import PaceLevel, get_pace_profile
 from travel_planner.integrations.api_registry import PROVIDERS
@@ -55,10 +57,24 @@ SESSION_HOTEL_CANDIDATES = "hotel_candidates"
 SESSION_SELECTED_HOTEL = "selected_hotel"
 SESSION_MUST_VISIT_STOPS = "must_visit_stops"
 SESSION_MUST_VISIT_ERRORS = "must_visit_errors"
+SESSION_MANUAL_HOTEL = "manual_hotel"
+SESSION_MANUAL_HOTEL_ERROR = "manual_hotel_error"
 
 DAYS_SPEC = RangeFieldSpec(label="旅遊天數", minimum=1, maximum=10, step=1)
 TOTAL_BUDGET_SPEC = RangeFieldSpec(label="總預算", minimum=1000, maximum=300000, step=1000, unit="NTD")
 LODGING_BUDGET_SPEC = RangeFieldSpec(label="住宿預算", minimum=0, maximum=150000, step=1000, unit="NTD")
+
+ROUTE_MODE_LABELS = {
+    RouteMode.TRANSIT: "大眾運輸",
+    RouteMode.DRIVE: "駕車估算",
+    RouteMode.AUTO: "自動（先大眾運輸，失敗再駕車）",
+}
+
+WALKING_PREFERENCE_LABELS = {
+    WalkingPreference.NORMAL: "一般",
+    WalkingPreference.PREFER_WALKING: "偏好步行",
+    WalkingPreference.SHORT_WALK_ONLY: "僅短距離步行",
+}
 
 
 class LivePriceCollector:
@@ -78,6 +94,62 @@ def format_price_source(original_price: str, provider: str) -> str:
     return f"{original_price} | 資料來源：{provider}"
 
 
+def _workflow_step_statuses(result: WorkflowResult) -> dict[str, str]:
+    statuses = {
+        "行程 Agent": "待執行",
+        "Places 驗證": "待執行",
+        "Routes 驗證": "待執行",
+        "美食 Agent": "待執行",
+        "Budget Gate": "待執行",
+        "檢查 Agent": "待執行",
+    }
+    warnings = set(result.day_state.warnings)
+
+    if result.day_state.status.value != "DRAFT" or result.day_state.places:
+        statuses["行程 Agent"] = "完成"
+
+    if result.day_state.places:
+        statuses["Places 驗證"] = "完成"
+    elif "GROUNDING_FAILED" in warnings and result.status is WorkflowStatus.NEEDS_MANUAL_REVIEW:
+        statuses["Places 驗證"] = "失敗"
+
+    if "ROUTE_UNAVAILABLE" in warnings and result.status is WorkflowStatus.NEEDS_MANUAL_REVIEW:
+        statuses["Routes 驗證"] = "失敗"
+    elif result.day_state.route is not None:
+        statuses["Routes 驗證"] = "完成"
+    elif result.status is WorkflowStatus.AWAITING_PACE_DECISION:
+        statuses["Routes 驗證"] = "需決策"
+
+    if result.day_state.meals:
+        statuses["美食 Agent"] = "完成"
+
+    if result.status in {
+        WorkflowStatus.AWAITING_BUDGET_DECISION,
+        WorkflowStatus.AWAITING_PRICE_DECISION,
+    }:
+        statuses["Budget Gate"] = "需決策"
+    elif result.status is WorkflowStatus.DAY_APPROVED:
+        statuses["Budget Gate"] = "完成"
+
+    if result.day_state.quality_score is not None or result.status is WorkflowStatus.DAY_APPROVED:
+        statuses["檢查 Agent"] = "完成"
+
+    return statuses
+
+
+def _format_manual_review_reason(result: WorkflowResult) -> str:
+    warnings = set(result.day_state.warnings)
+    if "ROUTE_UNAVAILABLE" in warnings:
+        return "路線驗證連續失敗兩次，系統無法算出完整交通路線。請調整住宿、景點組合或稍後重試。"
+    if "GROUNDING_FAILED" in warnings:
+        return "景點解析連續失敗兩次，系統找不到可用的正式地點資料。請改用更完整的景點名稱或調整目的地。"
+    return "系統無法完成此日的自動驗證流程。請調整住宿、景點或稍後重試。"
+
+
+def _can_plan_next_day(*, current_day: int, total_days: int) -> bool:
+    return current_day < total_days
+
+
 def _render_synced_range_input(
     label: str,
     *,
@@ -87,31 +159,69 @@ def _render_synced_range_input(
     default: int,
 ) -> int | Decimal:
     _require_streamlit()
-    slider_value = st.slider(
+    normalized_default = _normalize_range_state_value(default, spec)
+    if slider_key not in st.session_state:
+        st.session_state[slider_key] = int(normalized_default)
+    if input_key not in st.session_state:
+        st.session_state[input_key] = normalized_default
+
+    st.slider(
         label,
         min_value=spec.minimum,
         max_value=spec.maximum,
-        value=st.session_state.get(slider_key, default),
+        value=int(st.session_state[slider_key]),
         step=spec.step,
         key=slider_key,
+        on_change=_sync_range_from_slider,
+        args=(slider_key, input_key, spec),
     )
-    input_value = st.number_input(
+    st.number_input(
         f"{label}（輸入）",
         min_value=spec.minimum,
         max_value=spec.maximum,
-        value=st.session_state.get(input_key, slider_value),
+        value=int(st.session_state[input_key]),
         step=spec.step,
         key=input_key,
+        on_change=_sync_range_from_input,
+        args=(slider_key, input_key, spec),
     )
-    coerced = coerce_range_value(input_value, spec)
-    st.session_state[slider_key] = int(coerced) if isinstance(coerced, Decimal) and spec.unit is None else int(coerced) if isinstance(coerced, int) else int(coerced)
-    st.session_state[input_key] = float(coerced) if isinstance(coerced, Decimal) else coerced
-    return coerced
+    return coerce_range_value(st.session_state[input_key], spec)
+
+
+def _normalize_range_state_value(raw: str | int | float | Decimal, spec: RangeFieldSpec) -> int:
+    coerced = coerce_range_value(raw, spec)
+    return int(coerced)
+
+
+def _sync_range_from_slider(slider_key: str, input_key: str, spec: RangeFieldSpec) -> None:
+    _require_streamlit()
+    st.session_state[input_key] = _normalize_range_state_value(st.session_state[slider_key], spec)
+
+
+def _sync_range_from_input(slider_key: str, input_key: str, spec: RangeFieldSpec) -> None:
+    _require_streamlit()
+    normalized = _normalize_range_state_value(st.session_state[input_key], spec)
+    st.session_state[input_key] = normalized
+    st.session_state[slider_key] = int(normalized)
 
 
 def render_trip_spec_form() -> None:
     _require_streamlit()
     st.header("旅程需求")
+    st.markdown(
+        """
+        <style>
+        @media (min-width: 1024px) {
+          div[data-testid="stColumn"]:has(#sticky-map-anchor) {
+            position: sticky;
+            top: 1rem;
+            align-self: flex-start;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     try:
         settings = Settings()
     except (ValidationError, ValueError, InvalidOperation) as error:
@@ -145,12 +255,31 @@ def render_trip_spec_form() -> None:
             input_key="budget-lodging-input",
             default=8000,
         )
+        st.caption(f"目前住宿預算：NTD {int(lodging_budget_amount):,}")
+
+        destination_stop = _preview_destination(settings, destination)
+        hotel_candidates = _preview_hotel_candidates(settings, destination)
+        candidate_hotel = _render_hotel_candidates(hotel_candidates)
+        manual_hotel_name = st.text_input("自行指定住宿地點", value="")
+        manual_hotel, manual_hotel_error = _preview_manual_hotel(settings, manual_hotel_name)
+
         budget_currency = st.selectbox("預算幣別", options=["TWD"], index=0)
+        route_mode = st.selectbox(
+            "交通方式",
+            options=list(RouteMode),
+            index=2,
+            format_func=lambda value: ROUTE_MODE_LABELS[value],
+        )
+        walking_preference = st.selectbox(
+            "步行偏好",
+            options=list(WalkingPreference),
+            index=0,
+            format_func=lambda value: WALKING_PREFERENCE_LABELS[value],
+        )
         interests = st.text_input("興趣", value="anime, food")
         must_visit_name = st.text_area("必去景點", value="Universal Studios Japan")
         must_visit_price = st.text_input("必去景點價格 (JPY)", value="8600")
         must_visit_price_url = st.text_input("必去景點官方價格 URL")
-        st.caption(f"目前住宿預算：NTD {int(lodging_budget_amount):,}")
         pace_level = st.radio(
             "旅遊節奏",
             options=list(PaceLevel),
@@ -158,17 +287,20 @@ def render_trip_spec_form() -> None:
             index=1,
         )
 
-        destination_stop = _preview_destination(settings, destination)
-        hotel_candidates = _preview_hotel_candidates(settings, destination)
         must_visit_stops, must_visit_errors = _preview_must_visit_stops(settings, must_visit_name)
-        selected_hotel = _render_hotel_candidates(hotel_candidates)
+        selected_hotel = _select_effective_hotel(candidate_hotel=candidate_hotel, manual_hotel=manual_hotel)
+        preview_hotels = _merge_preview_hotels(hotel_candidates, manual_hotel)
 
         st.session_state[SESSION_DESTINATION_STOP] = destination_stop
         st.session_state[SESSION_HOTEL_CANDIDATES] = hotel_candidates
         st.session_state[SESSION_MUST_VISIT_STOPS] = must_visit_stops
         st.session_state[SESSION_MUST_VISIT_ERRORS] = must_visit_errors
+        st.session_state[SESSION_MANUAL_HOTEL] = manual_hotel
+        st.session_state[SESSION_MANUAL_HOTEL_ERROR] = manual_hotel_error
 
-        if selected_hotel is not None:
+        if manual_hotel is not None:
+            st.success(f"目前使用手動指定住宿：{manual_hotel.name}")
+        elif selected_hotel is not None:
             st.success(f"已選住宿：{selected_hotel.name}")
         else:
             st.warning("請先從住宿候補中選擇一間住宿。")
@@ -176,16 +308,19 @@ def render_trip_spec_form() -> None:
         submitted = st.button("開始規劃", disabled=selected_hotel is None)
 
     with right:
+        st.markdown("<div id='sticky-map-anchor'></div>", unsafe_allow_html=True)
         st.subheader("地圖預覽")
         render_preview_map(
             settings.google_maps_api_key.get_secret_value(),
             destination_stop=destination_stop,
-            hotel_candidates=hotel_candidates,
+            hotel_candidates=preview_hotels,
             must_visit_stops=must_visit_stops,
             selected_hotel_place_id=selected_hotel.place_id if selected_hotel else None,
         )
-        if destination_stop is None and not hotel_candidates and not must_visit_stops:
+        if destination_stop is None and not preview_hotels and not must_visit_stops:
             st.info("輸入目的地後，這裡會顯示城市、住宿候補與必去景點預覽。")
+        if manual_hotel_error:
+            st.warning(manual_hotel_error)
         for warning in must_visit_errors:
             st.warning(warning)
 
@@ -210,6 +345,8 @@ def render_trip_spec_form() -> None:
             budget_currency=budget_currency,
             interests=interests,
             pace_level=pace_level,
+            route_mode=route_mode,
+            walking_preference=walking_preference,
             selected_hotel=selected_hotel,
             grounded_must_visit=must_visit_stops,
             must_visit_name=must_visit_name,
@@ -231,17 +368,11 @@ def render_trip_spec_form() -> None:
 def render_running_or_evidence(workflow: TravelWorkflow, result: WorkflowResult) -> None:
     _require_streamlit()
     st.header("驗證流程")
-    labels = [
-        "行程 Agent",
-        "Places 驗證",
-        "Routes 驗證",
-        "美食 Agent",
-        "Budget Gate",
-        "檢查 Agent",
-    ]
+    step_statuses = _workflow_step_statuses(result)
+    labels = list(step_statuses.keys())
     st.columns(len(labels))
     for column, label in zip(st.columns(len(labels)), labels, strict=True):
-        column.metric(label, "完成" if result.day_state.status.value != "DRAFT" else "待執行")
+        column.metric(label, step_statuses[label])
 
     with st.expander("資料來源與限制", expanded=False):
         for provider in PROVIDERS.values():
@@ -347,6 +478,10 @@ def render_approved_itinerary(settings: Settings, workflow: TravelWorkflow, resu
         left.metric("必要移動", f"{route.total_required_transfer_minutes} 分")
         center.metric("最長單段", f"{route.max_single_transfer_minutes} 分")
         right.metric("步行距離", f"{route.walking_distance_km:.1f} km")
+        st.caption(
+            f"交通方式：{ROUTE_MODE_LABELS[workflow.trip_spec.route_mode]} | "
+            f"步行偏好：{WALKING_PREFERENCE_LABELS[workflow.trip_spec.walking_preference]}"
+        )
 
     st.subheader("費用證據")
     for price in workflow.trip_spec.prices + result.day_state.prices:
@@ -371,6 +506,14 @@ def render_approved_itinerary(settings: Settings, workflow: TravelWorkflow, resu
         route.encoded_polyline if route else None,
         route.encoded_polyline_segments if route else None,
     )
+
+    if _can_plan_next_day(current_day=result.day_state.day, total_days=workflow.trip_spec.days):
+        next_day = result.day_state.day + 1
+        if st.button(f"規劃第 {next_day} 天", key=f"plan-day-{next_day}"):
+            st.session_state[SESSION_RESULT] = workflow.start_day(next_day)
+            st.rerun()
+    else:
+        st.success("全部天數已規劃完成。")
 
 
 def main() -> None:
@@ -405,7 +548,8 @@ def main() -> None:
         return
 
     if result.status is WorkflowStatus.NEEDS_MANUAL_REVIEW:
-        st.error("此日行程需要人工處理。請調整住宿、景點或稍後重試。")
+        st.error("此日行程需要人工處理。")
+        st.write(_format_manual_review_reason(result))
 
 
 def _build_live_workflow(settings: Settings, trip_spec: TripSpec) -> TravelWorkflow:
@@ -431,6 +575,8 @@ def _build_trip_spec_from_preflight(
     budget_currency: str,
     interests: str,
     pace_level: PaceLevel,
+    route_mode: RouteMode,
+    walking_preference: WalkingPreference,
     selected_hotel: PlaceStop,
     grounded_must_visit: list[PlaceStop],
     must_visit_name: str,
@@ -475,6 +621,8 @@ def _build_trip_spec_from_preflight(
         budget_currency=budget_currency,
         interests=[part.strip() for part in interests.split(",") if part.strip()],
         pace=get_pace_profile(pace_level),
+        route_mode=route_mode,
+        walking_preference=walking_preference,
         hotel=selected_hotel,
         must_visit=must_visit,
         prices=trip_prices,
@@ -545,6 +693,16 @@ def _preview_hotel_candidates(settings: Settings, destination: str) -> list[Plac
         return []
 
 
+def _preview_manual_hotel(settings: Settings, raw_text: str) -> tuple[PlaceStop | None, str | None]:
+    if not raw_text.strip():
+        return None, None
+    places_client = GooglePlacesClient(settings.google_maps_api_key.get_secret_value())
+    try:
+        return _ground_required_place(places_client, raw_text.strip(), field_label="自行指定住宿地點"), None
+    except ValueError as error:
+        return None, str(error)
+
+
 def _preview_must_visit_stops(settings: Settings, raw_text: str) -> tuple[list[PlaceStop], list[str]]:
     queries = _build_must_visit_preview_queries(raw_text)
     if not queries:
@@ -586,6 +744,18 @@ def _render_hotel_candidates(candidates: list[PlaceStop]) -> PlaceStop | None:
     selected_hotel = next(candidate for candidate in candidates if candidate.place_id == selected_place_id)
     st.session_state[SESSION_SELECTED_HOTEL] = selected_hotel
     return selected_hotel
+
+
+def _select_effective_hotel(*, candidate_hotel: PlaceStop | None, manual_hotel: PlaceStop | None) -> PlaceStop | None:
+    return manual_hotel or candidate_hotel
+
+
+def _merge_preview_hotels(candidates: list[PlaceStop], manual_hotel: PlaceStop | None) -> list[PlaceStop]:
+    if manual_hotel is None:
+        return candidates
+    if any(candidate.place_id == manual_hotel.place_id for candidate in candidates if candidate.place_id):
+        return candidates
+    return [*candidates, manual_hotel]
 
 
 def _ground_required_place(places_client: GooglePlacesClient, query: str, *, field_label: str) -> PlaceStop:

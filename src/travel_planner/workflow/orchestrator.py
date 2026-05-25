@@ -57,7 +57,17 @@ class _FixtureAgents:
         self._itineraries = iter(itinerary_sequences)
         self._lunches = iter(lunch_sequences)
 
-    def propose_itinerary(self, destination, pace_name, visited, rejected):
+    def propose_itinerary(
+        self,
+        destination,
+        pace_name,
+        visited,
+        rejected,
+        must_visit,
+        remaining_slots,
+        route_mode,
+        walking_preference,
+    ):
         class Proposal:
             def __init__(self, candidates):
                 self.candidates = candidates
@@ -93,7 +103,7 @@ class _FixtureRoutes:
     def __init__(self, results: list[FakeRouteScenario | Exception]):
         self._results = iter(results)
 
-    def compute_daily_route(self, place_ids):
+    def compute_daily_route(self, place_ids, *, route_mode=None):
         current = next(self._results)
         if isinstance(current, Exception):
             raise current
@@ -288,14 +298,33 @@ class TravelWorkflow:
 
     def start_day(self, day: int) -> WorkflowResult:
         existing_retry_count = self.current_day.retry_count if self.current_day else 0
-        candidate_names = self.agents.propose_itinerary(
-            self.trip_spec.destination,
-            self.trip_spec.pace.level.value,
-            visited=[],
-            rejected=self.replanning_constraints,
-        ).candidates[0]
+        locked_places = self.trip_spec.must_visit[: self.trip_spec.pace.max_major_places_per_day]
+        remaining_slots = self.trip_spec.pace.max_major_places_per_day - len(locked_places)
+        candidate_names: list[str] = []
+        if remaining_slots > 0:
+            candidate_names = self.agents.propose_itinerary(
+                self.trip_spec.destination,
+                self.trip_spec.pace.level.value,
+                visited=[place.name for place in locked_places],
+                rejected=self.replanning_constraints,
+                must_visit=[place.name for place in locked_places],
+                remaining_slots=remaining_slots,
+                route_mode=self.trip_spec.route_mode.value,
+                walking_preference=self.trip_spec.walking_preference.value,
+            ).candidates[0]
         try:
-            places = [self.places.ground(name) for name in candidate_names]
+            proposed_places: list[PlaceStop] = []
+            for name in candidate_names:
+                grounded = self.places.ground(name)
+                if any(
+                    existing.place_id == grounded.place_id or existing.name == grounded.name
+                    for existing in [*locked_places, *proposed_places]
+                ):
+                    continue
+                proposed_places.append(grounded)
+                if len(proposed_places) >= remaining_slots:
+                    break
+            places = [*locked_places, *proposed_places]
         except GroundingNotFound as error:
             previous_retries = self.current_day.retry_count if self.current_day else 0
             retries = previous_retries + 1
@@ -318,7 +347,7 @@ class TravelWorkflow:
 
     def _compute_route_or_retry(self, place_ids: list[str]) -> RouteResult | WorkflowResult:
         try:
-            return self.routes.compute_daily_route(place_ids)
+            return self.routes.compute_daily_route(place_ids, route_mode=self.trip_spec.route_mode)
         except RouteUnavailable as error:
             retries = self.current_day.retry_count + 1
             self.replanning_constraints.append(f"REJECT_ROUTE:{error.reason}")

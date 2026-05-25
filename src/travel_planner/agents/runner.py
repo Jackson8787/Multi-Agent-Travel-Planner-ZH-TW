@@ -1,6 +1,7 @@
+from inspect import signature
 from pathlib import Path
 
-from openai import OpenAI
+from openai import LengthFinishReasonError, OpenAI
 from pydantic import BaseModel, Field
 
 from travel_planner.config import Settings
@@ -39,15 +40,40 @@ class AzureStructuredLlm:
         self.client = client
         self.deployment = deployment
         self.response_format = response_format
+        self._parse_parameters = set(signature(self.client.beta.chat.completions.parse).parameters)
 
     def call(self, prompt: str):
-        response = self.client.beta.chat.completions.parse(
-            model=self.deployment,
-            messages=[{"role": "user", "content": prompt}],
-            response_format=self.response_format,
-            max_completion_tokens=1200,
-        )
+        try:
+            response = self._parse(
+                prompt=prompt,
+                reasoning_effort="low",
+                max_completion_tokens=2400,
+            )
+        except LengthFinishReasonError:
+            retry_prompt = (
+                f"{prompt}\n\n"
+                "Important: respond with the smallest valid JSON only. "
+                "Do not include any explanation or extra text."
+            )
+            response = self._parse(
+                prompt=retry_prompt,
+                reasoning_effort="minimal",
+                max_completion_tokens=4000,
+            )
         return response.choices[0].message.parsed
+
+    def _parse(self, *, prompt: str, reasoning_effort: str, max_completion_tokens: int):
+        kwargs = {
+            "model": self.deployment,
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": self.response_format,
+            "max_completion_tokens": max_completion_tokens,
+        }
+        if "reasoning_effort" in self._parse_parameters:
+            kwargs["reasoning_effort"] = reasoning_effort
+        elif "reasoning" in self._parse_parameters:
+            kwargs["reasoning"] = {"effort": reasoning_effort}
+        return self.client.beta.chat.completions.parse(**kwargs)
 
 
 class AgentRunner:
@@ -55,7 +81,15 @@ class AgentRunner:
         self.llm = llm
 
     def propose_itinerary(
-        self, destination: str, pace_name: str, visited: list[str], rejected: list[str]
+        self,
+        destination: str,
+        pace_name: str,
+        visited: list[str],
+        rejected: list[str],
+        must_visit: list[str],
+        remaining_slots: int,
+        route_mode: str,
+        walking_preference: str,
     ) -> ItineraryProposal:
         skill = _read_skill("itinerary_agent.md")
         prompt = (
@@ -63,7 +97,11 @@ class AgentRunner:
             f"Destination: {destination}\n"
             f"Pace: {pace_name}\n"
             f"Visited: {visited}\n"
-            f"Rejected: {rejected}"
+            f"Rejected: {rejected}\n"
+            f"Must visit: {must_visit}\n"
+            f"Remaining slots: {remaining_slots}\n"
+            f"Route mode: {route_mode}\n"
+            f"Walking preference: {walking_preference}"
         )
         return self.llm.call(prompt)
 
@@ -81,9 +119,26 @@ class LiveAgentSuite:
         self._review_llm = build_azure_llm(settings, response_format=ReviewResult)
 
     def propose_itinerary(
-        self, destination: str, pace_name: str, visited: list[str], rejected: list[str]
+        self,
+        destination: str,
+        pace_name: str,
+        visited: list[str],
+        rejected: list[str],
+        must_visit: list[str],
+        remaining_slots: int,
+        route_mode: str,
+        walking_preference: str,
     ) -> ItineraryProposal:
-        return self._itinerary_runner.propose_itinerary(destination, pace_name, visited, rejected)
+        return self._itinerary_runner.propose_itinerary(
+            destination,
+            pace_name,
+            visited,
+            rejected,
+            must_visit,
+            remaining_slots,
+            route_mode,
+            walking_preference,
+        )
 
     def propose_food(self, places: list[PlaceStop]) -> FoodProposal:
         skill = _read_skill("food_agent.md")

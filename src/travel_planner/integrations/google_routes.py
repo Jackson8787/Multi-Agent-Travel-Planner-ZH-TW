@@ -5,7 +5,7 @@ from math import ceil
 import httpx
 from pydantic import BaseModel
 
-from travel_planner.domain.models import PriceRecord, PriceStatus, RouteEvidence
+from travel_planner.domain.models import PriceRecord, PriceStatus, RouteEvidence, RouteMode
 
 
 class RouteUnavailable(Exception):
@@ -32,7 +32,12 @@ class GoogleRoutesClient:
         if self.client is None:
             self.client = httpx.Client(timeout=30.0)
 
-    def compute_daily_route(self, place_ids: list[str]) -> RouteResult:
+    def compute_daily_route(
+        self,
+        place_ids: list[str],
+        *,
+        route_mode: RouteMode = RouteMode.AUTO,
+    ) -> RouteResult:
         if len(place_ids) < 2:
             raise RouteUnavailable("At least two verified stops are required")
 
@@ -42,9 +47,15 @@ class GoogleRoutesClient:
         polyline_segments: list[str] = []
         fare_total = Decimal("0")
         fare_currency: str | None = None
+        used_drive_fallback = False
 
         for origin, destination in zip(place_ids[:-1], place_ids[1:], strict=True):
-            first = self._compute_leg(origin, destination)
+            first, used_leg_drive_fallback = self._compute_leg(
+                origin,
+                destination,
+                route_mode=route_mode,
+            )
+            used_drive_fallback = used_drive_fallback or used_leg_drive_fallback
             total_minutes += _seconds_to_minutes(first["duration"])
             leg_minutes = max(_seconds_to_minutes(leg["duration"]) for leg in first.get("legs", []))
             max_single_minutes = max(max_single_minutes, leg_minutes)
@@ -66,6 +77,11 @@ class GoogleRoutesClient:
             walking_distance_km=round(total_distance_meters / 1000, 2),
             encoded_polyline=polyline_segments[0] if polyline_segments else None,
             encoded_polyline_segments=polyline_segments,
+            source_provider=(
+                "Google Routes API (drive fallback)"
+                if used_drive_fallback
+                else "Google Routes API"
+            ),
         )
         if fare_currency is None:
             return RouteResult(evidence=evidence)
@@ -80,7 +96,47 @@ class GoogleRoutesClient:
         )
         return RouteResult(evidence=evidence, transit_fare=transit_fare)
 
-    def _compute_leg(self, origin_place_id: str, destination_place_id: str) -> dict:
+    def _compute_leg(
+        self,
+        origin_place_id: str,
+        destination_place_id: str,
+        *,
+        route_mode: RouteMode,
+    ) -> tuple[dict, bool]:
+        if route_mode is RouteMode.DRIVE:
+            drive_payload = self._request_leg(
+                origin_place_id=origin_place_id,
+                destination_place_id=destination_place_id,
+                travel_mode="DRIVE",
+            )
+            drive_routes = drive_payload.get("routes", [])
+            if drive_routes:
+                return drive_routes[0], False
+            raise RouteUnavailable("No Google Routes result for verified stops")
+
+        transit_payload = self._request_leg(
+            origin_place_id=origin_place_id,
+            destination_place_id=destination_place_id,
+            travel_mode="TRANSIT",
+        )
+        transit_routes = transit_payload.get("routes", [])
+        if transit_routes:
+            return transit_routes[0], False
+
+        if route_mode is RouteMode.TRANSIT:
+            raise RouteUnavailable("No Google Routes result for verified stops")
+
+        drive_payload = self._request_leg(
+            origin_place_id=origin_place_id,
+            destination_place_id=destination_place_id,
+            travel_mode="DRIVE",
+        )
+        drive_routes = drive_payload.get("routes", [])
+        if drive_routes:
+            return drive_routes[0], True
+        raise RouteUnavailable("No Google Routes result for verified stops")
+
+    def _request_leg(self, *, origin_place_id: str, destination_place_id: str, travel_mode: str) -> dict:
         response = self.client.post(
             "https://routes.googleapis.com/directions/v2:computeRoutes",
             headers={
@@ -94,14 +150,10 @@ class GoogleRoutesClient:
             json={
                 "origin": {"placeId": origin_place_id},
                 "destination": {"placeId": destination_place_id},
-                "travelMode": "TRANSIT",
+                "travelMode": travel_mode,
                 "computeAlternativeRoutes": False,
                 "languageCode": "zh-TW",
             },
         )
         response.raise_for_status()
-        payload = response.json()
-        routes = payload.get("routes", [])
-        if not routes:
-            raise RouteUnavailable("No Google Routes result for verified stops")
-        return routes[0]
+        return response.json()

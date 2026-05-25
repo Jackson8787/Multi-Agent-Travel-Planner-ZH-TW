@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from travel_planner.domain.models import PlaceStop
 from travel_planner.domain.models import UserChoice, UserDecision
 from travel_planner.workflow.orchestrator import DemoFixtures, TravelWorkflow, WorkflowStatus
 
@@ -48,3 +49,16 @@ def test_second_unroutable_candidate_requires_manual_review():
 
     assert result.status is WorkflowStatus.NEEDS_MANUAL_REVIEW
     assert result.day_state.retry_count == 2
+
+
+def test_locked_must_visit_places_are_used_before_agent_candidates():
+    workflow = TravelWorkflow.from_fixtures(DemoFixtures.first_route_too_tiring())
+    workflow.trip_spec.destination = "Yokohama"
+    workflow.trip_spec.must_visit = [
+        PlaceStop(name="Cup Noodles Museum Yokohama", place_id="cup-yokohama", locked=True)
+    ]
+
+    result = workflow.start_day(1)
+
+    assert result.day_state.places[0].place_id == "cup-yokohama"
+    assert len(result.day_state.places) <= workflow.trip_spec.pace.max_major_places_per_day

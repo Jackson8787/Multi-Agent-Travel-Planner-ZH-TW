@@ -5,6 +5,10 @@ from travel_planner.integrations.google_places import GroundingNotFound
 from travel_planner.ui.app import (
     _build_must_visit_preview_queries,
     _build_trip_spec_from_preflight,
+    _can_plan_next_day,
+    _format_manual_review_reason,
+    _workflow_step_statuses,
+    _select_effective_hotel,
     _build_user_input_error,
     _validate_trip_spec_inputs,
     _validate_trip_submission_inputs,
@@ -12,8 +16,16 @@ from travel_planner.ui.app import (
     format_price_source,
 )
 from travel_planner.config import Settings
-from travel_planner.domain.models import PlaceStop
+from travel_planner.domain.models import (
+    DayPlanState,
+    DayPlanStatus,
+    PlaceStop,
+    RouteEvidence,
+    RouteMode,
+    WalkingPreference,
+)
 from travel_planner.domain.pace import PaceLevel
+from travel_planner.workflow.orchestrator import WorkflowResult, WorkflowStatus
 
 
 def test_pace_conflict_displays_observed_and_selected_limit():
@@ -116,6 +128,8 @@ def test_build_trip_spec_from_preflight_uses_selected_hotel_and_pre_grounded_mus
         budget_currency="TWD",
         interests="anime, food",
         pace_level=PaceLevel.RELAXED,
+        route_mode=RouteMode.AUTO,
+        walking_preference=WalkingPreference.NORMAL,
         selected_hotel=PlaceStop(name="Hotel A", place_id="h1"),
         grounded_must_visit=[PlaceStop(name="Cup Noodles Museum", place_id="p1")],
         must_visit_name="Cup Noodles Museum",
@@ -125,3 +139,77 @@ def test_build_trip_spec_from_preflight_uses_selected_hotel_and_pre_grounded_mus
 
     assert trip_spec.hotel.place_id == "h1"
     assert [stop.place_id for stop in trip_spec.must_visit] == ["p1"]
+    assert trip_spec.route_mode is RouteMode.AUTO
+    assert trip_spec.walking_preference is WalkingPreference.NORMAL
+
+
+def test_select_effective_hotel_prefers_manual_hotel():
+    candidate = PlaceStop(name="Candidate Hotel", place_id="candidate-id")
+    manual = PlaceStop(name="Manual Hotel", place_id="manual-id")
+
+    selected = _select_effective_hotel(candidate_hotel=candidate, manual_hotel=manual)
+
+    assert selected.place_id == "manual-id"
+
+
+def test_workflow_step_statuses_mark_route_failure_for_manual_review():
+    result = WorkflowResult(
+        status=WorkflowStatus.NEEDS_MANUAL_REVIEW,
+        day_state=DayPlanState(
+            day=1,
+            status=DayPlanStatus.NEEDS_MANUAL_REVIEW,
+            places=[PlaceStop(name="橫濱地標大廈", place_id="p1")],
+            warnings=["ROUTE_UNAVAILABLE"],
+            route=RouteEvidence(
+                total_required_transfer_minutes=43,
+                max_single_transfer_minutes=17,
+                walking_distance_km=2.9,
+            ),
+        ),
+    )
+
+    statuses = _workflow_step_statuses(result)
+
+    assert statuses["行程 Agent"] == "完成"
+    assert statuses["Places 驗證"] == "完成"
+    assert statuses["Routes 驗證"] == "失敗"
+    assert statuses["Budget Gate"] == "待執行"
+    assert statuses["檢查 Agent"] == "待執行"
+
+
+def test_format_manual_review_reason_explains_route_unavailable():
+    result = WorkflowResult(
+        status=WorkflowStatus.NEEDS_MANUAL_REVIEW,
+        day_state=DayPlanState(
+            day=1,
+            status=DayPlanStatus.NEEDS_MANUAL_REVIEW,
+            places=[PlaceStop(name="橫濱地標大廈", place_id="p1")],
+            warnings=["ROUTE_UNAVAILABLE"],
+        ),
+    )
+
+    message = _format_manual_review_reason(result)
+
+    assert "路線驗證" in message
+    assert "兩次" in message
+
+
+def test_format_manual_review_reason_explains_grounding_failure():
+    result = WorkflowResult(
+        status=WorkflowStatus.NEEDS_MANUAL_REVIEW,
+        day_state=DayPlanState(
+            day=1,
+            status=DayPlanStatus.NEEDS_MANUAL_REVIEW,
+            warnings=["GROUNDING_FAILED"],
+        ),
+    )
+
+    message = _format_manual_review_reason(result)
+
+    assert "景點" in message
+    assert "解析" in message
+
+
+def test_can_plan_next_day_only_when_not_on_last_day():
+    assert _can_plan_next_day(current_day=1, total_days=3) is True
+    assert _can_plan_next_day(current_day=3, total_days=3) is False

@@ -19,6 +19,18 @@ class RateType(StrEnum):
     INDICATIVE_MIDPOINT = "INDICATIVE_MIDPOINT"
 
 
+class RouteMode(StrEnum):
+    TRANSIT = "TRANSIT"
+    DRIVE = "DRIVE"
+    AUTO = "AUTO"
+
+
+class WalkingPreference(StrEnum):
+    NORMAL = "NORMAL"
+    PREFER_WALKING = "PREFER_WALKING"
+    SHORT_WALK_ONLY = "SHORT_WALK_ONLY"
+
+
 class PlaceLoadTag(StrEnum):
     FLEXIBLE_VISIT = "FLEXIBLE_VISIT"
     FULL_DAY_HIGH_LOAD = "FULL_DAY_HIGH_LOAD"
@@ -117,6 +129,8 @@ class TripSpec(BaseModel):
     budget_currency: str = "TWD"
     interests: list[str]
     pace: PaceProfile
+    route_mode: RouteMode = RouteMode.AUTO
+    walking_preference: WalkingPreference = WalkingPreference.NORMAL
     hotel: PlaceStop
     must_visit: list[PlaceStop] = Field(default_factory=list)
     prices: list[PriceRecord] = Field(default_factory=list)
