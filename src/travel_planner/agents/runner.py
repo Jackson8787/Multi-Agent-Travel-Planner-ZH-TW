@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from travel_planner.config import Settings
@@ -22,18 +23,31 @@ class ReviewResult(BaseModel):
 
 
 def build_azure_llm(settings: Settings, response_format: type[BaseModel]):
-    from crewai import LLM
-
-    return LLM(
-        model=f"azure/{settings.azure_openai_deployment}",
-        api_key=settings.azure_openai_api_key.get_secret_value(),
+    client = OpenAI(
         base_url=str(settings.azure_openai_endpoint),
-        api_version=settings.azure_openai_api_version,
-        response_format=response_format,
-        temperature=0.2,
-        timeout=60.0,
-        max_retries=2,
+        api_key=settings.azure_openai_api_key.get_secret_value(),
     )
+    return AzureStructuredLlm(
+        client=client,
+        deployment=settings.azure_openai_deployment,
+        response_format=response_format,
+    )
+
+
+class AzureStructuredLlm:
+    def __init__(self, client: OpenAI, deployment: str, response_format: type[BaseModel]):
+        self.client = client
+        self.deployment = deployment
+        self.response_format = response_format
+
+    def call(self, prompt: str):
+        response = self.client.beta.chat.completions.parse(
+            model=self.deployment,
+            messages=[{"role": "user", "content": prompt}],
+            response_format=self.response_format,
+            max_completion_tokens=1200,
+        )
+        return response.choices[0].message.parsed
 
 
 class AgentRunner:
