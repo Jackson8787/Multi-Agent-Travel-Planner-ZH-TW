@@ -1,5 +1,6 @@
 from decimal import Decimal, InvalidOperation
 
+import httpx
 from pydantic import ValidationError
 
 try:  # pragma: no cover - exercised only when streamlit is installed
@@ -23,7 +24,7 @@ from travel_planner.domain.models import (
 from travel_planner.domain.pace import PaceLevel, get_pace_profile
 from travel_planner.integrations.api_registry import PROVIDERS
 from travel_planner.integrations.exchange_rates import ExchangeRateClient
-from travel_planner.integrations.google_places import GooglePlacesClient
+from travel_planner.integrations.google_places import GooglePlacesClient, GroundingNotFound
 from travel_planner.integrations.google_routes import GoogleRoutesClient, RouteResult
 from travel_planner.observability.tracing import LangfuseTracer, NoOpTracer
 from travel_planner.ui.map_component import render_verified_route_map
@@ -340,9 +341,20 @@ def _build_trip_spec(
     must_visit_price: str,
     must_visit_price_url: str,
 ) -> TripSpec:
+    destination = destination.strip()
+    hotel_name = hotel_name.strip()
+    must_visit_name = must_visit_name.strip()
+    must_visit_price = must_visit_price.strip()
+    _validate_trip_spec_inputs(
+        destination=destination,
+        hotel_name=hotel_name,
+        must_visit_name=must_visit_name,
+        must_visit_price=must_visit_price,
+    )
+
     places_client = GooglePlacesClient(settings.google_maps_api_key.get_secret_value())
     rates_client = ExchangeRateClient(settings.exchange_rate_api_key.get_secret_value())
-    hotel = places_client.ground(hotel_name)
+    hotel = _ground_required_place(places_client, hotel_name, field_label="住宿名稱")
     fx_snapshot = rates_client.snapshot(base_currency="JPY", target_currency=budget_currency)
     trip_prices = [
         PriceRecord(
@@ -357,11 +369,11 @@ def _build_trip_spec(
         )
     ]
     must_visit: list[PlaceStop] = []
-    if must_visit_name.strip():
-        grounded = places_client.ground(must_visit_name)
+    if must_visit_name:
+        grounded = _ground_required_place(places_client, must_visit_name, field_label="必去景點")
         grounded.locked = True
         must_visit.append(grounded)
-        if must_visit_price.strip():
+        if must_visit_price:
             trip_prices.append(
                 PriceRecord(
                     item_id="must-visit-1",
@@ -376,7 +388,7 @@ def _build_trip_spec(
             )
 
     return TripSpec(
-        destination=destination.strip() or "Osaka",
+        destination=destination,
         days=days,
         budget_amount=Decimal(budget_amount),
         budget_currency=budget_currency,
@@ -387,6 +399,67 @@ def _build_trip_spec(
         prices=trip_prices,
         fx_snapshot=ExchangeRateSnapshot.model_validate(fx_snapshot.model_dump()),
     )
+
+
+def _validate_trip_spec_inputs(
+    *,
+    destination: str,
+    hotel_name: str,
+    must_visit_name: str,
+    must_visit_price: str,
+) -> None:
+    if not destination.strip():
+        raise ValueError("目的地不能空白")
+    if not hotel_name.strip():
+        raise ValueError("住宿名稱不能空白")
+    if must_visit_price.strip() and not must_visit_name.strip():
+        raise ValueError("填寫必去景點價格前，請先輸入必去景點名稱")
+
+
+def _validate_trip_submission_inputs(
+    *,
+    destination: str,
+    days: int,
+    budget_amount: str,
+    lodging_budget_amount: str,
+    selected_hotel_place_id: str | None,
+    must_visit_name: str,
+    must_visit_price: str,
+) -> None:
+    _validate_trip_spec_inputs(
+        destination=destination,
+        hotel_name="selected-hotel",
+        must_visit_name=must_visit_name,
+        must_visit_price=must_visit_price,
+    )
+    if days < 1:
+        raise ValueError("旅遊天數必須大於 0")
+    if not budget_amount.strip():
+        raise ValueError("總預算不能空白")
+    if not lodging_budget_amount.strip():
+        raise ValueError("住宿預算不能空白")
+    if not selected_hotel_place_id:
+        raise ValueError("請先從住宿候補中選擇一間住宿。")
+
+
+def _build_must_visit_preview_queries(raw_text: str) -> list[str]:
+    normalized = raw_text.replace("\n", ",")
+    return [part.strip() for part in normalized.split(",") if part.strip()]
+
+
+def _ground_required_place(places_client: GooglePlacesClient, query: str, *, field_label: str) -> PlaceStop:
+    try:
+        return places_client.ground(query)
+    except (GroundingNotFound, httpx.HTTPStatusError) as error:
+        raise ValueError(_build_user_input_error(error, field_label=field_label, query=query)) from error
+
+
+def _build_user_input_error(error: Exception, *, field_label: str, query: str) -> str:
+    if isinstance(error, GroundingNotFound):
+        return f"{field_label}「{query}」找不到可驗證地點，請改用更完整或正式的名稱。"
+    if isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 400:
+        return f"{field_label}「{query}」格式無效，請改用更完整或正式的名稱。"
+    return f"{field_label}「{query}」目前無法完成地點驗證，請稍後重試。"
 
 
 def _format_converted_price(price: PriceRecord, fx: ExchangeRateSnapshot) -> str:
