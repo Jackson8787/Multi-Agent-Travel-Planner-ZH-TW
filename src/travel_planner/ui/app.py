@@ -271,6 +271,7 @@ def render_approved_itinerary(settings: Settings, workflow: TravelWorkflow, resu
         settings.google_maps_api_key.get_secret_value(),
         [workflow.trip_spec.hotel] + result.day_state.places + result.day_state.meals,
         route.encoded_polyline if route else None,
+        route.encoded_polyline_segments if route else None,
     )
 
 

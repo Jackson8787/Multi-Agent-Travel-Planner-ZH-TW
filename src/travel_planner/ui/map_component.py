@@ -12,18 +12,20 @@ def render_verified_route_map(
     api_key: str,
     stops: list[PlaceStop],
     encoded_polyline: str | None,
+    encoded_polyline_segments: list[str] | None = None,
     *,
     height: int = 420,
 ) -> None:
     verified_place_ids = [stop.place_id for stop in stops if stop.place_id]
-    if components is None or not verified_place_ids or not encoded_polyline:
+    polyline_segments = encoded_polyline_segments or ([encoded_polyline] if encoded_polyline else [])
+    if components is None or not verified_place_ids or not polyline_segments:
         return
 
     payload = json.dumps(
         {
             "apiKey": api_key,
             "placeIds": verified_place_ids,
-            "encodedPolyline": encoded_polyline,
+            "encodedPolylineSegments": polyline_segments,
         }
     )
 
@@ -39,15 +41,17 @@ def render_verified_route_map(
           streetViewControl: false,
         }});
         const bounds = new google.maps.LatLngBounds();
-        const routePath = google.maps.geometry.encoding.decodePath(payload.encodedPolyline);
-        new google.maps.Polyline({{
-          path: routePath,
-          strokeColor: "#2563eb",
-          strokeOpacity: 0.85,
-          strokeWeight: 4,
-          map,
+        payload.encodedPolylineSegments.forEach((encodedPolyline) => {{
+          const routePath = google.maps.geometry.encoding.decodePath(encodedPolyline);
+          new google.maps.Polyline({{
+            path: routePath,
+            strokeColor: "#2563eb",
+            strokeOpacity: 0.85,
+            strokeWeight: 4,
+            map,
+          }});
+          routePath.forEach((point) => bounds.extend(point));
         }});
-        routePath.forEach((point) => bounds.extend(point));
         const service = new google.maps.places.PlacesService(map);
         payload.placeIds.forEach((placeId, index) => {{
           service.getDetails({{ placeId, fields: ["name", "geometry"] }}, (place, status) => {{

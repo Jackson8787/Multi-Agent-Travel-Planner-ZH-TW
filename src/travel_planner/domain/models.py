@@ -146,6 +146,7 @@ class RouteEvidence(BaseModel):
     max_single_transfer_minutes: int = Field(ge=0)
     walking_distance_km: float = Field(ge=0)
     encoded_polyline: str | None = None
+    encoded_polyline_segments: list[str] = Field(default_factory=list)
     source_provider: str = "Google Routes API"
 
     @model_validator(mode="after")
