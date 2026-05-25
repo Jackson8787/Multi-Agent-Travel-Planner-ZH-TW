@@ -28,7 +28,7 @@ from travel_planner.integrations.google_places import GooglePlacesClient, Ground
 from travel_planner.integrations.google_routes import GoogleRoutesClient, RouteResult
 from travel_planner.observability.tracing import LangfuseTracer, NoOpTracer
 from travel_planner.ui.form_state import RangeFieldSpec, coerce_range_value
-from travel_planner.ui.map_component import render_verified_route_map
+from travel_planner.ui.map_component import render_preview_map, render_verified_route_map
 from travel_planner.validation.budget import evaluate_budget
 from travel_planner.workflow.orchestrator import TravelWorkflow, WorkflowResult, WorkflowStatus
 
@@ -50,6 +50,11 @@ SESSION_WORKFLOW = "workflow"
 SESSION_RESULT = "workflow_result"
 SESSION_SETTINGS = "settings"
 SESSION_ERROR = "settings_error"
+SESSION_DESTINATION_STOP = "destination_stop"
+SESSION_HOTEL_CANDIDATES = "hotel_candidates"
+SESSION_SELECTED_HOTEL = "selected_hotel"
+SESSION_MUST_VISIT_STOPS = "must_visit_stops"
+SESSION_MUST_VISIT_ERRORS = "must_visit_errors"
 
 DAYS_SPEC = RangeFieldSpec(label="旅遊天數", minimum=1, maximum=10, step=1)
 TOTAL_BUDGET_SPEC = RangeFieldSpec(label="總預算", minimum=1000, maximum=300000, step=1000, unit="NTD")
@@ -107,60 +112,97 @@ def _render_synced_range_input(
 def render_trip_spec_form() -> None:
     _require_streamlit()
     st.header("旅程需求")
+    try:
+        settings = Settings()
+    except (ValidationError, ValueError, InvalidOperation) as error:
+        st.session_state[SESSION_ERROR] = str(error)
+        return
+    except Exception as error:  # pragma: no cover - UI fallback
+        st.session_state[SESSION_ERROR] = f"初始化 live workflow 失敗：{error}"
+        return
+
     left, right = st.columns([1, 1.2])
     with left:
-        with st.form("trip_spec"):
-            destination = st.text_input("目的地", value="Osaka")
-            days = _render_synced_range_input(
-                "旅遊天數",
-                spec=DAYS_SPEC,
-                slider_key="trip-days-slider",
-                input_key="trip-days-input",
-                default=5,
-            )
-            budget_amount = _render_synced_range_input(
-                "總預算",
-                spec=TOTAL_BUDGET_SPEC,
-                slider_key="budget-total-slider",
-                input_key="budget-total-input",
-                default=25000,
-            )
-            lodging_budget_amount = _render_synced_range_input(
-                "住宿預算",
-                spec=LODGING_BUDGET_SPEC,
-                slider_key="budget-lodging-slider",
-                input_key="budget-lodging-input",
-                default=8000,
-            )
-            budget_currency = st.selectbox("預算幣別", options=["TWD"], index=0)
-            interests = st.text_input("興趣", value="anime, food")
-            hotel_name = st.text_input("住宿名稱", value="Hotel Monterey Grasmere Osaka")
-            hotel_price = st.text_input("住宿總價 (JPY)", value="38000")
-            hotel_price_url = st.text_input("住宿官方或訂房來源 URL")
-            must_visit_name = st.text_input("必去景點", value="Universal Studios Japan")
-            must_visit_price = st.text_input("必去景點價格 (JPY)", value="8600")
-            must_visit_price_url = st.text_input("必去景點官方價格 URL")
-            st.caption(f"目前住宿預算：NTD {int(lodging_budget_amount):,}")
+        destination = st.text_input("目的地", value="Osaka")
+        days = _render_synced_range_input(
+            "旅遊天數",
+            spec=DAYS_SPEC,
+            slider_key="trip-days-slider",
+            input_key="trip-days-input",
+            default=5,
+        )
+        budget_amount = _render_synced_range_input(
+            "總預算",
+            spec=TOTAL_BUDGET_SPEC,
+            slider_key="budget-total-slider",
+            input_key="budget-total-input",
+            default=25000,
+        )
+        lodging_budget_amount = _render_synced_range_input(
+            "住宿預算",
+            spec=LODGING_BUDGET_SPEC,
+            slider_key="budget-lodging-slider",
+            input_key="budget-lodging-input",
+            default=8000,
+        )
+        budget_currency = st.selectbox("預算幣別", options=["TWD"], index=0)
+        interests = st.text_input("興趣", value="anime, food")
+        must_visit_name = st.text_area("必去景點", value="Universal Studios Japan")
+        must_visit_price = st.text_input("必去景點價格 (JPY)", value="8600")
+        must_visit_price_url = st.text_input("必去景點官方價格 URL")
+        st.caption(f"目前住宿預算：NTD {int(lodging_budget_amount):,}")
+        pace_level = st.radio(
+            "旅遊節奏",
+            options=list(PaceLevel),
+            format_func=lambda value: f"{PACE_LABELS[value]}: {PACE_DESCRIPTIONS[value]}",
+            index=1,
+        )
 
-            pace_level = st.radio(
-                "旅遊節奏",
-                options=list(PaceLevel),
-                format_func=lambda value: f"{PACE_LABELS[value]}: {PACE_DESCRIPTIONS[value]}",
-                index=1,
-            )
+        destination_stop = _preview_destination(settings, destination)
+        hotel_candidates = _preview_hotel_candidates(settings, destination)
+        must_visit_stops, must_visit_errors = _preview_must_visit_stops(settings, must_visit_name)
+        selected_hotel = _render_hotel_candidates(hotel_candidates)
 
-            submitted = st.form_submit_button("開始規劃")
+        st.session_state[SESSION_DESTINATION_STOP] = destination_stop
+        st.session_state[SESSION_HOTEL_CANDIDATES] = hotel_candidates
+        st.session_state[SESSION_MUST_VISIT_STOPS] = must_visit_stops
+        st.session_state[SESSION_MUST_VISIT_ERRORS] = must_visit_errors
+
+        if selected_hotel is not None:
+            st.success(f"已選住宿：{selected_hotel.name}")
+        else:
+            st.warning("請先從住宿候補中選擇一間住宿。")
+
+        submitted = st.button("開始規劃", disabled=selected_hotel is None)
 
     with right:
         st.subheader("地圖預覽")
-        st.info("輸入目的地後，這裡會顯示城市、住宿候補與必去景點預覽。")
+        render_preview_map(
+            settings.google_maps_api_key.get_secret_value(),
+            destination_stop=destination_stop,
+            hotel_candidates=hotel_candidates,
+            must_visit_stops=must_visit_stops,
+            selected_hotel_place_id=selected_hotel.place_id if selected_hotel else None,
+        )
+        if destination_stop is None and not hotel_candidates and not must_visit_stops:
+            st.info("輸入目的地後，這裡會顯示城市、住宿候補與必去景點預覽。")
+        for warning in must_visit_errors:
+            st.warning(warning)
 
     if not submitted:
         return
 
     try:
-        settings = Settings()
-        trip_spec = _build_trip_spec(
+        _validate_trip_submission_inputs(
+            destination=destination,
+            days=int(days),
+            budget_amount=str(budget_amount),
+            lodging_budget_amount=str(lodging_budget_amount),
+            selected_hotel_place_id=selected_hotel.place_id if selected_hotel else None,
+            must_visit_name=must_visit_name,
+            must_visit_price=must_visit_price,
+        )
+        trip_spec = _build_trip_spec_from_preflight(
             settings=settings,
             destination=destination,
             days=int(days),
@@ -168,18 +210,14 @@ def render_trip_spec_form() -> None:
             budget_currency=budget_currency,
             interests=interests,
             pace_level=pace_level,
-            hotel_name=hotel_name,
-            hotel_price=hotel_price,
-            hotel_price_url=hotel_price_url,
+            selected_hotel=selected_hotel,
+            grounded_must_visit=must_visit_stops,
             must_visit_name=must_visit_name,
             must_visit_price=must_visit_price,
             must_visit_price_url=must_visit_price_url,
         )
     except (ValidationError, ValueError, InvalidOperation) as error:
         st.session_state[SESSION_ERROR] = str(error)
-        return
-    except Exception as error:  # pragma: no cover - UI fallback
-        st.session_state[SESSION_ERROR] = f"初始化 live workflow 失敗：{error}"
         return
 
     workflow = _build_live_workflow(settings, trip_spec)
@@ -384,7 +422,7 @@ def _build_live_workflow(settings: Settings, trip_spec: TripSpec) -> TravelWorkf
     )
 
 
-def _build_trip_spec(
+def _build_trip_spec_from_preflight(
     *,
     settings: Settings,
     destination: str,
@@ -393,58 +431,42 @@ def _build_trip_spec(
     budget_currency: str,
     interests: str,
     pace_level: PaceLevel,
-    hotel_name: str,
-    hotel_price: str,
-    hotel_price_url: str,
+    selected_hotel: PlaceStop,
+    grounded_must_visit: list[PlaceStop],
     must_visit_name: str,
     must_visit_price: str,
     must_visit_price_url: str,
 ) -> TripSpec:
     destination = destination.strip()
-    hotel_name = hotel_name.strip()
     must_visit_name = must_visit_name.strip()
     must_visit_price = must_visit_price.strip()
-    _validate_trip_spec_inputs(
+    _validate_trip_submission_inputs(
         destination=destination,
-        hotel_name=hotel_name,
+        days=days,
+        budget_amount=budget_amount,
+        lodging_budget_amount="1",
+        selected_hotel_place_id=selected_hotel.place_id,
         must_visit_name=must_visit_name,
         must_visit_price=must_visit_price,
     )
 
-    places_client = GooglePlacesClient(settings.google_maps_api_key.get_secret_value())
     rates_client = ExchangeRateClient(settings.exchange_rate_api_key.get_secret_value())
-    hotel = _ground_required_place(places_client, hotel_name, field_label="住宿名稱")
     fx_snapshot = rates_client.snapshot(base_currency="JPY", target_currency=budget_currency)
-    trip_prices = [
-        PriceRecord(
-            item_id="hotel-total",
-            item_name=hotel_name,
-            category="lodging",
-            amount_original=Decimal(hotel_price),
-            currency_original="JPY",
-            status=PriceStatus.USER_CONFIRMED_OFFICIAL_SOURCE,
-            source_provider="User Confirmed Official Source",
-            source_url=hotel_price_url or None,
-        )
-    ]
-    must_visit: list[PlaceStop] = []
-    if must_visit_name:
-        grounded = _ground_required_place(places_client, must_visit_name, field_label="必去景點")
-        grounded.locked = True
-        must_visit.append(grounded)
-        if must_visit_price:
-            trip_prices.append(
-                PriceRecord(
-                    item_id="must-visit-1",
-                    item_name=must_visit_name,
-                    category="admission",
-                    amount_original=Decimal(must_visit_price),
-                    currency_original="JPY",
-                    status=PriceStatus.USER_CONFIRMED_OFFICIAL_SOURCE,
-                    source_provider="User Confirmed Official Source",
-                    source_url=must_visit_price_url or None,
-                )
+    trip_prices: list[PriceRecord] = []
+    must_visit = [stop.model_copy(update={"locked": True}) for stop in grounded_must_visit]
+    if must_visit_price and must_visit:
+        trip_prices.append(
+            PriceRecord(
+                item_id="must-visit-1",
+                item_name=must_visit[0].name,
+                category="admission",
+                amount_original=Decimal(must_visit_price),
+                currency_original="JPY",
+                status=PriceStatus.USER_CONFIRMED_OFFICIAL_SOURCE,
+                source_provider="User Confirmed Official Source",
+                source_url=must_visit_price_url or None,
             )
+        )
 
     return TripSpec(
         destination=destination,
@@ -453,7 +475,7 @@ def _build_trip_spec(
         budget_currency=budget_currency,
         interests=[part.strip() for part in interests.split(",") if part.strip()],
         pace=get_pace_profile(pace_level),
-        hotel=hotel,
+        hotel=selected_hotel,
         must_visit=must_visit,
         prices=trip_prices,
         fx_snapshot=ExchangeRateSnapshot.model_validate(fx_snapshot.model_dump()),
@@ -491,12 +513,9 @@ def _validate_trip_submission_inputs(
         must_visit_name=must_visit_name,
         must_visit_price=must_visit_price,
     )
-    if days < 1:
-        raise ValueError("旅遊天數必須大於 0")
-    if not budget_amount.strip():
-        raise ValueError("總預算不能空白")
-    if not lodging_budget_amount.strip():
-        raise ValueError("住宿預算不能空白")
+    coerce_range_value(days, DAYS_SPEC)
+    coerce_range_value(budget_amount, TOTAL_BUDGET_SPEC)
+    coerce_range_value(lodging_budget_amount, LODGING_BUDGET_SPEC)
     if not selected_hotel_place_id:
         raise ValueError("請先從住宿候補中選擇一間住宿。")
 
@@ -504,6 +523,69 @@ def _validate_trip_submission_inputs(
 def _build_must_visit_preview_queries(raw_text: str) -> list[str]:
     normalized = raw_text.replace("\n", ",")
     return [part.strip() for part in normalized.split(",") if part.strip()]
+
+
+def _preview_destination(settings: Settings, destination: str) -> PlaceStop | None:
+    if not destination.strip():
+        return None
+    places_client = GooglePlacesClient(settings.google_maps_api_key.get_secret_value())
+    try:
+        return places_client.lookup_destination(destination.strip())
+    except (GroundingNotFound, httpx.HTTPStatusError):
+        return None
+
+
+def _preview_hotel_candidates(settings: Settings, destination: str) -> list[PlaceStop]:
+    if not destination.strip():
+        return []
+    places_client = GooglePlacesClient(settings.google_maps_api_key.get_secret_value())
+    try:
+        return places_client.search_hotel_candidates(destination.strip())
+    except (GroundingNotFound, httpx.HTTPStatusError):
+        return []
+
+
+def _preview_must_visit_stops(settings: Settings, raw_text: str) -> tuple[list[PlaceStop], list[str]]:
+    queries = _build_must_visit_preview_queries(raw_text)
+    if not queries:
+        return [], []
+
+    places_client = GooglePlacesClient(settings.google_maps_api_key.get_secret_value())
+    successful: list[PlaceStop] = []
+    errors: list[str] = []
+    for query in queries:
+        try:
+            successful.append(_ground_required_place(places_client, query, field_label="必去景點"))
+        except ValueError as error:
+            errors.append(str(error))
+    return successful, errors
+
+
+def _render_hotel_candidates(candidates: list[PlaceStop]) -> PlaceStop | None:
+    _require_streamlit()
+    if not candidates:
+        st.info("輸入目的地後，系統會推薦 3 個住宿候補。")
+        st.session_state.pop(SESSION_SELECTED_HOTEL, None)
+        return None
+
+    labels = {
+        candidate.place_id: f"{index + 1}. {candidate.name}"
+        for index, candidate in enumerate(candidates)
+        if candidate.place_id
+    }
+    current_selection = st.session_state.get(SESSION_SELECTED_HOTEL)
+    current_place_id = current_selection.place_id if isinstance(current_selection, PlaceStop) else None
+    if current_place_id not in labels:
+        current_place_id = next(iter(labels))
+    selected_place_id = st.radio(
+        "住宿候補",
+        options=list(labels.keys()),
+        format_func=labels.get,
+        index=list(labels.keys()).index(current_place_id),
+    )
+    selected_hotel = next(candidate for candidate in candidates if candidate.place_id == selected_place_id)
+    st.session_state[SESSION_SELECTED_HOTEL] = selected_hotel
+    return selected_hotel
 
 
 def _ground_required_place(places_client: GooglePlacesClient, query: str, *, field_label: str) -> PlaceStop:

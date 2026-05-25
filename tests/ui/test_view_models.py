@@ -1,14 +1,19 @@
 import pytest
+from pydantic import HttpUrl, SecretStr
 
 from travel_planner.integrations.google_places import GroundingNotFound
 from travel_planner.ui.app import (
     _build_must_visit_preview_queries,
+    _build_trip_spec_from_preflight,
     _build_user_input_error,
     _validate_trip_spec_inputs,
     _validate_trip_submission_inputs,
     format_pace_conflict,
     format_price_source,
 )
+from travel_planner.config import Settings
+from travel_planner.domain.models import PlaceStop
+from travel_planner.domain.pace import PaceLevel
 
 
 def test_pace_conflict_displays_observed_and_selected_limit():
@@ -75,3 +80,48 @@ def test_validate_trip_submission_inputs_requires_selected_hotel():
             must_visit_name="",
             must_visit_price="",
         )
+
+
+def test_build_trip_spec_from_preflight_uses_selected_hotel_and_pre_grounded_must_visit(monkeypatch):
+    settings = Settings.model_construct(
+        google_maps_api_key=SecretStr("maps"),
+        exchange_rate_api_key=SecretStr("rates"),
+        azure_openai_api_key=SecretStr("azure"),
+        azure_openai_endpoint=HttpUrl("https://example.openai.azure.com/"),
+        azure_openai_deployment="gpt-5-mini",
+        azure_openai_api_version="2024-10-21",
+    )
+
+    class _Snapshot:
+        def model_dump(self):
+            return {
+                "provider": "ExchangeRate-API",
+                "base_currency": "JPY",
+                "target_currency": "TWD",
+                "rate": "0.2",
+                "retrieved_at": "2026-05-25T00:00:00",
+                "rate_type": "INDICATIVE_MIDPOINT",
+            }
+
+    monkeypatch.setattr(
+        "travel_planner.ui.app.ExchangeRateClient.snapshot",
+        lambda self, base_currency, target_currency: _Snapshot(),
+    )
+
+    trip_spec = _build_trip_spec_from_preflight(
+        settings=settings,
+        destination="橫濱",
+        days=2,
+        budget_amount="25000",
+        budget_currency="TWD",
+        interests="anime, food",
+        pace_level=PaceLevel.RELAXED,
+        selected_hotel=PlaceStop(name="Hotel A", place_id="h1"),
+        grounded_must_visit=[PlaceStop(name="Cup Noodles Museum", place_id="p1")],
+        must_visit_name="Cup Noodles Museum",
+        must_visit_price="0",
+        must_visit_price_url="",
+    )
+
+    assert trip_spec.hotel.place_id == "h1"
+    assert [stop.place_id for stop in trip_spec.must_visit] == ["p1"]

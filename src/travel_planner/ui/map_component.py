@@ -211,6 +211,36 @@ def render_verified_route_map(
     st.iframe(src, height=height, width="stretch")
 
 
+def render_preview_map(
+    api_key: str,
+    *,
+    destination_stop: PlaceStop | None,
+    hotel_candidates: list[PlaceStop],
+    must_visit_stops: list[PlaceStop],
+    selected_hotel_place_id: str | None,
+    height: int = 420,
+) -> None:
+    has_preview_data = any(
+        [
+            destination_stop and destination_stop.place_id,
+            any(stop.place_id for stop in hotel_candidates),
+            any(stop.place_id for stop in must_visit_stops),
+        ]
+    )
+    if st is None or not has_preview_data:
+        return
+
+    src = build_preview_map_src(
+        api_key=api_key,
+        destination_stop=destination_stop,
+        hotel_candidates=hotel_candidates,
+        must_visit_stops=must_visit_stops,
+        selected_hotel_place_id=selected_hotel_place_id,
+        height=height,
+    )
+    st.iframe(src, height=height, width="stretch")
+
+
 def _serialize_stop(stop: PlaceStop | None) -> dict[str, str] | None:
     if stop is None or not stop.place_id:
         return None

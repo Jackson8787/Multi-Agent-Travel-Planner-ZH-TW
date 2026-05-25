@@ -112,7 +112,7 @@ class PlaceStop(BaseModel):
 
 class TripSpec(BaseModel):
     destination: str
-    days: int = Field(ge=1, le=5)
+    days: int = Field(ge=1, le=10)
     budget_amount: Decimal = Field(ge=0)
     budget_currency: str = "TWD"
     interests: list[str]
