@@ -9,6 +9,103 @@ except ModuleNotFoundError:  # pragma: no cover - import fallback for test envir
 from travel_planner.domain.models import PlaceStop
 
 
+def build_preview_map_src(
+    api_key: str,
+    *,
+    destination_stop: PlaceStop | None,
+    hotel_candidates: list[PlaceStop],
+    must_visit_stops: list[PlaceStop],
+    selected_hotel_place_id: str | None,
+    height: int = 420,
+) -> str:
+    payload = {
+        "apiKey": api_key,
+        "destinationStop": _serialize_stop(destination_stop),
+        "hotelCandidates": [_serialize_stop(stop) for stop in hotel_candidates if stop.place_id],
+        "mustVisitStops": [_serialize_stop(stop) for stop in must_visit_stops if stop.place_id],
+        "selectedHotelPlaceId": selected_hotel_place_id,
+        "height": height - 20,
+    }
+    html = f"""
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <style>
+        html, body, #travel-map {{
+          margin: 0;
+          padding: 0;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+          background: #f3f4f6;
+        }}
+      </style>
+    </head>
+    <body>
+      <div id="travel-map"></div>
+      <script>
+        const payload = {json.dumps(payload)};
+        const loadMarker = (service, map, bounds, entry, options = {{}}) => {{
+          if (!entry?.placeId) return;
+          service.getDetails({{ placeId: entry.placeId, fields: ["name", "geometry"] }}, (place, status) => {{
+            if (status !== google.maps.places.PlacesServiceStatus.OK || !place?.geometry?.location) {{
+              return;
+            }}
+            const markerOptions = {{
+              map,
+              position: place.geometry.location,
+              title: place.name ?? entry.name,
+            }};
+            if (options.label) markerOptions.label = options.label;
+            if (options.color) {{
+              markerOptions.icon = {{
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 8,
+                fillColor: options.color,
+                fillOpacity: 1,
+                strokeColor: "#111827",
+                strokeWeight: 1,
+              }};
+            }}
+            new google.maps.Marker(markerOptions);
+            bounds.extend(place.geometry.location);
+            map.fitBounds(bounds);
+          }});
+        }};
+        const mount = () => {{
+          const map = new google.maps.Map(document.getElementById("travel-map"), {{
+            zoom: 12,
+            center: {{ lat: 35.4437, lng: 139.6380 }},
+            mapTypeControl: false,
+            streetViewControl: false,
+          }});
+          const bounds = new google.maps.LatLngBounds();
+          const service = new google.maps.places.PlacesService(map);
+          loadMarker(service, map, bounds, payload.destinationStop, {{ color: "#2563eb" }});
+          payload.hotelCandidates.forEach((entry, index) => {{
+            loadMarker(service, map, bounds, entry, {{
+              label: `${{index + 1}}`,
+              color: entry.placeId === payload.selectedHotelPlaceId ? "#2563eb" : "#f59e0b",
+            }});
+          }});
+          payload.mustVisitStops.forEach((entry) => {{
+            loadMarker(service, map, bounds, entry, {{ color: "#dc2626" }});
+          }});
+          if (!bounds.isEmpty()) {{
+            map.fitBounds(bounds);
+          }}
+        }};
+        window.travelPlannerInitPreviewMap = mount;
+      </script>
+      <script src="https://maps.googleapis.com/maps/api/js?key={api_key}&libraries=places&callback=travelPlannerInitPreviewMap" async></script>
+    </body>
+    </html>
+    """
+    return f"data:text/html;charset=utf-8,{quote(html)}"
+
+
 def build_verified_route_map_src(
     api_key: str,
     stops: list[PlaceStop],
@@ -112,3 +209,9 @@ def render_verified_route_map(
         height=height,
     )
     st.iframe(src, height=height, width="stretch")
+
+
+def _serialize_stop(stop: PlaceStop | None) -> dict[str, str] | None:
+    if stop is None or not stop.place_id:
+        return None
+    return {"name": stop.name, "placeId": stop.place_id}
