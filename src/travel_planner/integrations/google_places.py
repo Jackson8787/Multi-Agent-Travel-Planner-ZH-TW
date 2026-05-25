@@ -21,6 +21,42 @@ class GooglePlacesClient:
             self.client = httpx.Client(timeout=30.0)
 
     def ground(self, query: str) -> PlaceStop:
+        payload = self._search_text(query)
+        places = payload.get("places", [])
+        if not places:
+            raise GroundingNotFound(query)
+
+        best = places[0]
+        name = best.get("displayName", {}).get("text", query)
+        return PlaceStop(name=name, place_id=best["id"])
+
+    def lookup_destination(self, query: str) -> PlaceStop:
+        payload = self._search_text(query)
+        places = payload.get("places", [])
+        if not places:
+            raise GroundingNotFound(query)
+
+        best = places[0]
+        return PlaceStop(
+            name=best.get("displayName", {}).get("text", query),
+            place_id=best["id"],
+        )
+
+    def search_hotel_candidates(self, destination: str, *, max_results: int = 3) -> list[PlaceStop]:
+        payload = self._search_text(f"hotels in {destination}")
+        places = payload.get("places", [])
+        if not places:
+            raise GroundingNotFound(destination)
+
+        return [
+            PlaceStop(
+                name=place.get("displayName", {}).get("text", destination),
+                place_id=place["id"],
+            )
+            for place in places[:max_results]
+        ]
+
+    def _search_text(self, query: str) -> dict:
         response = self.client.post(
             "https://places.googleapis.com/v1/places:searchText",
             headers={
@@ -33,11 +69,4 @@ class GooglePlacesClient:
             json={"textQuery": query, "languageCode": "zh-TW"},
         )
         response.raise_for_status()
-        payload = response.json()
-        places = payload.get("places", [])
-        if not places:
-            raise GroundingNotFound(query)
-
-        best = places[0]
-        name = best.get("displayName", {}).get("text", query)
-        return PlaceStop(name=name, place_id=best["id"])
+        return response.json()
