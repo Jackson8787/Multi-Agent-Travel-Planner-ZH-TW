@@ -289,6 +289,7 @@ class TravelWorkflow:
         self.reviewer = reviewer
         self.tracer = tracer or NoOpTracer()
         self.current_day: DayPlanState | None = None
+        self.approved_days: list[DayPlanState] = []
         self.replanning_constraints: list[str] = []
         self.pending_warnings: list[str] = []
 
@@ -300,12 +301,17 @@ class TravelWorkflow:
         existing_retry_count = self.current_day.retry_count if self.current_day else 0
         locked_places = self.trip_spec.must_visit[: self.trip_spec.pace.max_major_places_per_day]
         remaining_slots = self.trip_spec.pace.max_major_places_per_day - len(locked_places)
+        previously_visited = [
+            place.name
+            for prev_day in self.approved_days
+            for place in prev_day.places + prev_day.meals
+        ]
         candidate_names: list[str] = []
         if remaining_slots > 0:
             candidate_names = self.agents.propose_itinerary(
                 self.trip_spec.destination,
                 self.trip_spec.pace.level.value,
-                visited=[place.name for place in locked_places],
+                visited=[place.name for place in locked_places] + previously_visited,
                 rejected=self.replanning_constraints,
                 must_visit=[place.name for place in locked_places],
                 remaining_slots=remaining_slots,
@@ -470,6 +476,7 @@ class TravelWorkflow:
         self.current_day.quality_score = review.score
         self.current_day.warnings.extend(review.warnings)
         self.current_day.status = DayPlanStatus.APPROVED
+        self.approved_days.append(self.current_day)
         self.tracer.event("day_state_committed", self.current_day.model_dump(mode="json"))
         return WorkflowResult(status=WorkflowStatus.DAY_APPROVED, day_state=self.current_day)
 

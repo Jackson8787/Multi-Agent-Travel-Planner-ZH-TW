@@ -59,6 +59,7 @@ SESSION_MUST_VISIT_STOPS = "must_visit_stops"
 SESSION_MUST_VISIT_ERRORS = "must_visit_errors"
 SESSION_MANUAL_HOTEL = "manual_hotel"
 SESSION_MANUAL_HOTEL_ERROR = "manual_hotel_error"
+SESSION_APPROVED_DAYS = "approved_days"
 
 DAYS_SPEC = RangeFieldSpec(label="旅遊天數", minimum=1, maximum=10, step=1)
 TOTAL_BUDGET_SPEC = RangeFieldSpec(label="總預算", minimum=1000, maximum=300000, step=1000, unit="NTD")
@@ -521,10 +522,13 @@ def render_approved_itinerary(settings: Settings, workflow: TravelWorkflow, resu
     if _can_plan_next_day(current_day=result.day_state.day, total_days=workflow.trip_spec.days):
         next_day = result.day_state.day + 1
         if st.button(f"規劃第 {next_day} 天", key=f"plan-day-{next_day}"):
+            approved = st.session_state.get(SESSION_APPROVED_DAYS, [])
+            approved.append(result.day_state)
+            st.session_state[SESSION_APPROVED_DAYS] = approved
             st.session_state[SESSION_RESULT] = workflow.start_day(next_day)
             st.rerun()
     else:
-        st.success("全部天數已規劃完成。")
+        _render_trip_summary(workflow)
 
 
 def main() -> None:
@@ -545,6 +549,10 @@ def main() -> None:
         render_trip_spec_form()
         return
 
+    approved_days = st.session_state.get(SESSION_APPROVED_DAYS, [])
+    if approved_days:
+        _render_completed_days_summary(approved_days)
+
     render_running_or_evidence(workflow, result)
     if result.status in {
         WorkflowStatus.AWAITING_PACE_DECISION,
@@ -561,6 +569,60 @@ def main() -> None:
     if result.status is WorkflowStatus.NEEDS_MANUAL_REVIEW:
         st.error("此日行程需要人工處理。")
         st.write(_format_manual_review_reason(result))
+
+
+def _render_completed_days_summary(approved_days: list) -> None:
+    _require_streamlit()
+    with st.expander(f"已完成 {len(approved_days)} 天行程", expanded=False):
+        for day_state in approved_days:
+            st.markdown(f"**第 {day_state.day} 天**")
+            place_names = [p.name for p in day_state.places]
+            meal_names = [m.name for m in day_state.meals]
+            if place_names:
+                st.write("景點：" + "、".join(place_names))
+            if meal_names:
+                st.write("餐廳：" + "、".join(meal_names))
+            if day_state.route:
+                st.caption(
+                    f"移動 {day_state.route.total_required_transfer_minutes} 分 | "
+                    f"步行 {day_state.route.walking_distance_km:.1f} km"
+                )
+            if day_state.quality_score is not None:
+                st.caption(f"品質評分：{day_state.quality_score} / 5")
+            st.divider()
+
+
+def _render_trip_summary(workflow: TravelWorkflow) -> None:
+    _require_streamlit()
+    st.success(f"全部 {workflow.trip_spec.days} 天行程已規劃完成。")
+    all_approved = workflow.approved_days
+    if not all_approved:
+        return
+    st.subheader("旅程總覽")
+    all_prices = list(workflow.trip_spec.prices)
+    for day_state in all_approved:
+        all_prices.extend(day_state.prices)
+    fx = workflow.trip_spec.fx_snapshot
+    confirmed_total = (
+        sum(
+            (p.amount_original or Decimal("0")) * fx.rate
+            for p in all_prices
+            if p.amount_original is not None and p.status is not PriceStatus.MISSING_PRICE
+        ) or Decimal("0")
+    ).quantize(Decimal("0.01")) if fx else None
+
+    all_places = [
+        place.name
+        for day_state in all_approved
+        for place in day_state.places
+    ]
+    if all_places:
+        st.write("全程景點：" + "、".join(all_places))
+    if confirmed_total is not None:
+        st.metric(
+            f"已確認費用（{workflow.trip_spec.budget_currency}）",
+            str(confirmed_total),
+        )
 
 
 def _build_live_workflow(settings: Settings, trip_spec: TripSpec) -> TravelWorkflow:
