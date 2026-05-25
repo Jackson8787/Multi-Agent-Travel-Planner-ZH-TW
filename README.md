@@ -1,6 +1,6 @@
 # Multi-Agent Travel Planner
 
-Superpowers-guided Osaka travel planning demo with typed trip state, verification gates, and human decisions for pace and budget conflicts.
+Superpowers-guided Osaka travel planning demo with typed trip state, a left-form/right-map preflight UI, verification gates, and human decisions for pace and budget conflicts.
 
 ## Setup
 
@@ -41,11 +41,13 @@ The centralized provider registry for display metadata and maintenance lives at:
 
 ## Demo Workflow
 
-1. Confirm trip specification, hotel, must-visit item, and official prices.
-2. Generate itinerary candidates through the itinerary agent.
-3. Verify places and routes through Google APIs.
-4. Pause for user decisions when pace or budget conflicts occur.
-5. Approve only verified day plans and display evidence plus the verified route map.
+1. Enter destination, travel days, total budget, and lodging budget through synced slider/input controls.
+2. Review the right-side preview map as destination, hotel candidates, and must-visit places resolve.
+3. Select one hotel candidate from the left panel.
+4. Start itinerary planning with the selected hotel and any grounded must-visit places.
+5. Generate itinerary candidates through the itinerary agent and verify places plus routes through Google APIs.
+6. Pause for user decisions when pace or budget conflicts occur.
+7. Approve only verified day plans and display evidence plus the verified route map.
 
 ## Verification Commands
 
