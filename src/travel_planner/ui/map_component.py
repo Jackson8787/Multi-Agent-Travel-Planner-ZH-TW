@@ -16,6 +16,7 @@ def build_preview_map_src(
     hotel_candidates: list[PlaceStop],
     must_visit_stops: list[PlaceStop],
     selected_hotel_place_id: str | None,
+    additional_destination_stops: list[PlaceStop] | None = None,
     height: int = 420,
 ) -> str:
     payload = {
@@ -23,6 +24,9 @@ def build_preview_map_src(
         "destinationStop": _serialize_stop(destination_stop),
         "hotelCandidates": [_serialize_stop(stop) for stop in hotel_candidates if stop.place_id],
         "mustVisitStops": [_serialize_stop(stop) for stop in must_visit_stops if stop.place_id],
+        "additionalDestinationStops": [
+            _serialize_stop(stop) for stop in (additional_destination_stops or []) if stop.place_id
+        ],
         "selectedHotelPlaceId": selected_hotel_place_id,
         "height": height - 20,
     }
@@ -47,16 +51,17 @@ def build_preview_map_src(
       <div id="travel-map"></div>
       <script>
         const payload = {json.dumps(payload)};
-        const loadMarker = (service, map, bounds, entry, options = {{}}) => {{
+        const loadMarker = (service, map, bounds, infoWindow, entry, options = {{}}) => {{
           if (!entry?.placeId) return;
           service.getDetails({{ placeId: entry.placeId, fields: ["name", "geometry"] }}, (place, status) => {{
             if (status !== google.maps.places.PlacesServiceStatus.OK || !place?.geometry?.location) {{
               return;
             }}
+            const nameText = place.name ?? entry.name;
             const markerOptions = {{
               map,
               position: place.geometry.location,
-              title: place.name ?? entry.name,
+              title: nameText,
             }};
             if (options.label) markerOptions.label = options.label;
             if (options.color) {{
@@ -69,7 +74,16 @@ def build_preview_map_src(
                 strokeWeight: 1,
               }};
             }}
-            new google.maps.Marker(markerOptions);
+            const marker = new google.maps.Marker(markerOptions);
+            const tag = options.category
+              ? `<br><span style="color:#6b7280;font-size:11px">${{options.category}}</span>`
+              : "";
+            marker.addListener("click", () => {{
+              infoWindow.setContent(
+                `<div style="font-size:13px;line-height:1.5;max-width:180px"><strong>${{nameText}}</strong>${{tag}}</div>`
+              );
+              infoWindow.open(map, marker);
+            }});
             bounds.extend(place.geometry.location);
             map.fitBounds(bounds);
           }});
@@ -83,15 +97,20 @@ def build_preview_map_src(
           }});
           const bounds = new google.maps.LatLngBounds();
           const service = new google.maps.places.PlacesService(map);
-          loadMarker(service, map, bounds, payload.destinationStop, {{ color: "#2563eb" }});
+          const infoWindow = new google.maps.InfoWindow();
+          loadMarker(service, map, bounds, infoWindow, payload.destinationStop, {{ color: "#2563eb", category: "目的地" }});
+          (payload.additionalDestinationStops || []).forEach((entry, index) => {{
+            loadMarker(service, map, bounds, infoWindow, entry, {{ color: "#7c3aed", category: `城市 ${{index + 2}}` }});
+          }});
           payload.hotelCandidates.forEach((entry, index) => {{
-            loadMarker(service, map, bounds, entry, {{
+            loadMarker(service, map, bounds, infoWindow, entry, {{
               label: `${{index + 1}}`,
               color: entry.placeId === payload.selectedHotelPlaceId ? "#2563eb" : "#f59e0b",
+              category: `住宿候補 ${{index + 1}}`,
             }});
           }});
           payload.mustVisitStops.forEach((entry) => {{
-            loadMarker(service, map, bounds, entry, {{ color: "#dc2626" }});
+            loadMarker(service, map, bounds, infoWindow, entry, {{ color: "#dc2626", category: "必去景點" }});
           }});
           if (!bounds.isEmpty()) {{
             map.fitBounds(bounds);
@@ -161,16 +180,24 @@ def build_verified_route_map_src(
             routePath.forEach((point) => bounds.extend(point));
           }});
           const service = new google.maps.places.PlacesService(map);
+          const infoWindow = new google.maps.InfoWindow();
           payload.placeIds.forEach((placeId, index) => {{
             service.getDetails({{ placeId, fields: ["name", "geometry"] }}, (place, status) => {{
               if (status !== google.maps.places.PlacesServiceStatus.OK || !place?.geometry?.location) {{
                 return;
               }}
-              new google.maps.Marker({{
+              const nameText = place.name ?? placeId;
+              const marker = new google.maps.Marker({{
                 map,
                 position: place.geometry.location,
-                title: `${{index + 1}}. ${{place.name ?? placeId}}`,
+                title: `${{index + 1}}. ${{nameText}}`,
                 label: `${{index + 1}}`,
+              }});
+              marker.addListener("click", () => {{
+                infoWindow.setContent(
+                  `<div style="font-size:13px;line-height:1.5;max-width:180px"><strong>${{index + 1}}. ${{nameText}}</strong></div>`
+                );
+                infoWindow.open(map, marker);
               }});
               bounds.extend(place.geometry.location);
               map.fitBounds(bounds);
@@ -218,13 +245,16 @@ def render_preview_map(
     hotel_candidates: list[PlaceStop],
     must_visit_stops: list[PlaceStop],
     selected_hotel_place_id: str | None,
+    additional_destination_stops: list[PlaceStop] | None = None,
     height: int = 420,
 ) -> None:
+    additional = additional_destination_stops or []
     has_preview_data = any(
         [
             destination_stop and destination_stop.place_id,
             any(stop.place_id for stop in hotel_candidates),
             any(stop.place_id for stop in must_visit_stops),
+            any(stop.place_id for stop in additional),
         ]
     )
     if st is None or not has_preview_data:
@@ -236,6 +266,7 @@ def render_preview_map(
         hotel_candidates=hotel_candidates,
         must_visit_stops=must_visit_stops,
         selected_hotel_place_id=selected_hotel_place_id,
+        additional_destination_stops=additional,
         height=height,
     )
     st.iframe(src, height=height, width="stretch")

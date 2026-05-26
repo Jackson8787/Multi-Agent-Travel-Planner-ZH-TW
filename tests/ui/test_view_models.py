@@ -3,14 +3,14 @@ from pydantic import HttpUrl, SecretStr
 
 from travel_planner.integrations.google_places import GroundingNotFound
 from travel_planner.ui.app import (
+    _WELCOME_MESSAGE,
     _build_must_visit_preview_queries,
     _build_trip_spec_from_preflight,
     _can_plan_next_day,
     _format_manual_review_reason,
+    _interpret_macro_hotel_input,
     _workflow_step_statuses,
-    _select_effective_hotel,
     _build_user_input_error,
-    _validate_trip_spec_inputs,
     _validate_trip_submission_inputs,
     format_pace_conflict,
     format_price_source,
@@ -43,21 +43,12 @@ def test_price_source_displays_original_currency_and_provider():
     assert "Universal Studios Japan Official Website" in text
 
 
-def test_validate_trip_spec_inputs_rejects_blank_hotel_name():
-    with pytest.raises(ValueError, match="住宿名稱不能空白"):
-        _validate_trip_spec_inputs(
-            destination="橫濱",
-            hotel_name="   ",
-            must_visit_name="北韓船",
-            must_visit_price="",
-        )
-
-
-def test_validate_trip_spec_inputs_requires_must_visit_name_when_price_is_provided():
+def test_validate_trip_submission_inputs_requires_must_visit_name_when_price_is_provided():
     with pytest.raises(ValueError, match="填寫必去景點價格前，請先輸入必去景點名稱"):
-        _validate_trip_spec_inputs(
+        _validate_trip_submission_inputs(
             destination="橫濱",
-            hotel_name="Yokohama Royal Park Hotel",
+            days=2,
+            budget_amount="25000",
             must_visit_name="  ",
             must_visit_price="8600",
         )
@@ -81,20 +72,21 @@ def test_build_must_visit_preview_queries_splits_lines_and_commas():
     assert queries == ["鋼彈工廠", "紅磚倉庫", "杯麵博物館"]
 
 
-def test_validate_trip_submission_inputs_requires_selected_hotel():
-    with pytest.raises(ValueError, match="請先從住宿候補中選擇一間住宿。"):
+def test_validate_trip_submission_inputs_rejects_blank_destination():
+    with pytest.raises(ValueError, match="目的地不能空白"):
         _validate_trip_submission_inputs(
-            destination="橫濱",
+            destination="  ",
             days=2,
             budget_amount="25000",
-            lodging_budget_amount="8000",
-            selected_hotel_place_id=None,
             must_visit_name="",
             must_visit_price="",
         )
 
 
-def test_build_trip_spec_from_preflight_uses_selected_hotel_and_pre_grounded_must_visit(monkeypatch):
+def test_build_trip_spec_from_preflight_uses_placeholder_hotel_and_pre_grounded_must_visit(
+    monkeypatch,
+):
+    """Hotels are now selected during macro phase; the spec is built with a placeholder."""
     settings = Settings.model_construct(
         google_maps_api_key=SecretStr("maps"),
         exchange_rate_api_key=SecretStr("rates"),
@@ -130,26 +122,17 @@ def test_build_trip_spec_from_preflight_uses_selected_hotel_and_pre_grounded_mus
         pace_level=PaceLevel.RELAXED,
         route_mode=RouteMode.AUTO,
         walking_preference=WalkingPreference.NORMAL,
-        selected_hotel=PlaceStop(name="Hotel A", place_id="h1"),
         grounded_must_visit=[PlaceStop(name="Cup Noodles Museum", place_id="p1")],
         must_visit_name="Cup Noodles Museum",
         must_visit_price="0",
         must_visit_price_url="",
     )
 
-    assert trip_spec.hotel.place_id == "h1"
+    # Hotel is a placeholder until user selects during macro phase
+    assert trip_spec.hotel.place_id == "__placeholder__"
     assert [stop.place_id for stop in trip_spec.must_visit] == ["p1"]
     assert trip_spec.route_mode is RouteMode.AUTO
     assert trip_spec.walking_preference is WalkingPreference.NORMAL
-
-
-def test_select_effective_hotel_prefers_manual_hotel():
-    candidate = PlaceStop(name="Candidate Hotel", place_id="candidate-id")
-    manual = PlaceStop(name="Manual Hotel", place_id="manual-id")
-
-    selected = _select_effective_hotel(candidate_hotel=candidate, manual_hotel=manual)
-
-    assert selected.place_id == "manual-id"
 
 
 def test_workflow_step_statuses_mark_route_failure_for_manual_review():
@@ -213,3 +196,62 @@ def test_format_manual_review_reason_explains_grounding_failure():
 def test_can_plan_next_day_only_when_not_on_last_day():
     assert _can_plan_next_day(current_day=1, total_days=3) is True
     assert _can_plan_next_day(current_day=3, total_days=3) is False
+
+
+def test_welcome_message_mentions_key_concepts():
+    """The Phase 0 greeting should mention travel planning and give an example."""
+    assert "travel planner" in _WELCOME_MESSAGE.lower() or "AI" in _WELCOME_MESSAGE
+    assert "天" in _WELCOME_MESSAGE      # mentions days
+    assert "預算" in _WELCOME_MESSAGE    # mentions budget
+
+
+# ── _interpret_macro_hotel_input ─────────────────────────────────────────────
+
+CANDIDATES = ["Hotel Alpha", "Hotel Beta", "Hotel Gamma"]
+
+
+def test_interpret_macro_hotel_digit_1_selects_first():
+    assert _interpret_macro_hotel_input("1", CANDIDATES) == "Hotel Alpha"
+
+
+def test_interpret_macro_hotel_digit_2_selects_second():
+    assert _interpret_macro_hotel_input("2", CANDIDATES) == "Hotel Beta"
+
+
+def test_interpret_macro_hotel_digit_3_selects_third():
+    assert _interpret_macro_hotel_input("3", CANDIDATES) == "Hotel Gamma"
+
+
+def test_interpret_macro_hotel_bracketed_digit():
+    assert _interpret_macro_hotel_input("（2）", CANDIDATES) == "Hotel Beta"
+
+
+def test_interpret_macro_hotel_short_phrase_with_digit():
+    assert _interpret_macro_hotel_input("選2", CANDIDATES) == "Hotel Beta"
+    assert _interpret_macro_hotel_input("第3個", CANDIDATES) == "Hotel Gamma"
+    assert _interpret_macro_hotel_input("1也可以", CANDIDATES) == "Hotel Alpha"
+
+
+def test_interpret_macro_hotel_vague_returns_first():
+    for phrase in ("隨便", "都可以", "你決定", "隨意", "whatever", "交給你"):
+        result = _interpret_macro_hotel_input(phrase, CANDIDATES)
+        assert result == "Hotel Alpha", f"Expected first candidate for '{phrase}'"
+
+
+def test_interpret_macro_hotel_custom_name_returned_verbatim():
+    assert _interpret_macro_hotel_input("Grand Hyatt Tokyo", CANDIDATES) == "Grand Hyatt Tokyo"
+
+
+def test_interpret_macro_hotel_unrecognised_short_returns_none():
+    assert _interpret_macro_hotel_input("?", CANDIDATES) is None
+    assert _interpret_macro_hotel_input("", CANDIDATES) is None
+
+
+def test_interpret_macro_hotel_digit_5_returns_first_candidate_random():
+    """5 = 'let AI choose' → maps to first candidate."""
+    assert _interpret_macro_hotel_input("5", CANDIDATES) == "Hotel Alpha"
+
+
+def test_interpret_macro_hotel_digit_4_returns_none_for_custom():
+    """4 = 'other / type a name' — caller handles the custom prompt separately."""
+    assert _interpret_macro_hotel_input("4", CANDIDATES) is None

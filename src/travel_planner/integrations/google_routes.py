@@ -5,7 +5,7 @@ from math import ceil
 import httpx
 from pydantic import BaseModel
 
-from travel_planner.domain.models import PriceRecord, PriceStatus, RouteEvidence, RouteMode
+from travel_planner.domain.models import PriceRecord, PriceStatus, RouteEvidence, RouteMode, RouteLeg
 
 
 class RouteUnavailable(Exception):
@@ -43,11 +43,13 @@ class GoogleRoutesClient:
 
         total_minutes = 0
         max_single_minutes = 0
-        total_distance_meters = 0
+        total_walk_meters = 0   # WALK-mode steps only; transit/drive distances excluded
+        total_distance_meters = 0  # all transport modes combined
         polyline_segments: list[str] = []
         fare_total = Decimal("0")
         fare_currency: str | None = None
         used_drive_fallback = False
+        route_legs: list[RouteLeg] = []
 
         for origin, destination in zip(place_ids[:-1], place_ids[1:], strict=True):
             first, used_leg_drive_fallback = self._compute_leg(
@@ -56,10 +58,28 @@ class GoogleRoutesClient:
                 route_mode=route_mode,
             )
             used_drive_fallback = used_drive_fallback or used_leg_drive_fallback
-            total_minutes += _seconds_to_minutes(first["duration"])
-            leg_minutes = max(_seconds_to_minutes(leg["duration"]) for leg in first.get("legs", []))
-            max_single_minutes = max(max_single_minutes, leg_minutes)
+            leg_duration = _seconds_to_minutes(first["duration"])
+            total_minutes += leg_duration
+            raw_leg_minutes = max(
+                (_seconds_to_minutes(leg["duration"]) for leg in first.get("legs", [])),
+                default=leg_duration,
+            )
+            max_single_minutes = max(max_single_minutes, raw_leg_minutes)
+
+            # Accumulate total route distance (all modes).
             total_distance_meters += first.get("distanceMeters", 0)
+
+            # Sum only WALK-mode step distances to get accurate walking distance.
+            # The route-level distanceMeters includes transit (train/bus) distance,
+            # which is meaningless as a "walking" metric.
+            leg_walk_meters = sum(
+                step.get("distanceMeters", 0)
+                for api_leg in first.get("legs", [])
+                for step in api_leg.get("steps", [])
+                if step.get("travelMode") == "WALK"
+            )
+            total_walk_meters += leg_walk_meters
+
             polyline = first.get("polyline", {}).get("encodedPolyline")
             if polyline:
                 polyline_segments.append(polyline)
@@ -71,10 +91,19 @@ class GoogleRoutesClient:
                 fare_total += units + nanos
                 fare_currency = fare_payload.get("currencyCode", fare_currency or "JPY")
 
+            route_legs.append(
+                RouteLeg(
+                    duration_minutes=leg_duration,
+                    travel_mode="DRIVE" if used_leg_drive_fallback else "TRANSIT",
+                    walk_distance_km=round(leg_walk_meters / 1000, 3),
+                )
+            )
+
         evidence = RouteEvidence(
             total_required_transfer_minutes=total_minutes,
             max_single_transfer_minutes=max_single_minutes,
-            walking_distance_km=round(total_distance_meters / 1000, 2),
+            walking_distance_km=round(total_walk_meters / 1000, 2),
+            total_distance_km=round(total_distance_meters / 1000, 2),
             encoded_polyline=polyline_segments[0] if polyline_segments else None,
             encoded_polyline_segments=polyline_segments,
             source_provider=(
@@ -82,6 +111,7 @@ class GoogleRoutesClient:
                 if used_drive_fallback
                 else "Google Routes API"
             ),
+            legs=route_legs,
         )
         if fare_currency is None:
             return RouteResult(evidence=evidence)
@@ -143,7 +173,10 @@ class GoogleRoutesClient:
                 "X-Goog-Api-Key": self.api_key,
                 "X-Goog-FieldMask": (
                     "routes.duration,routes.distanceMeters,"
-                    "routes.polyline.encodedPolyline,routes.legs.duration,"
+                    "routes.polyline.encodedPolyline,"
+                    "routes.legs.duration,"
+                    "routes.legs.steps.distanceMeters,"
+                    "routes.legs.steps.travelMode,"
                     "routes.travelAdvisory.transitFare"
                 ),
             },

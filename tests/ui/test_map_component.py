@@ -15,6 +15,7 @@ def test_build_verified_route_map_src_uses_verified_stops_and_polyline_segments(
         encoded_polyline_segments=["seg-1", "seg-2"],
         height=420,
     )
+    decoded_src = unquote(src)
 
     assert src.startswith("data:text/html;charset=utf-8,")
     assert "hotel-id" in src
@@ -22,6 +23,10 @@ def test_build_verified_route_map_src_uses_verified_stops_and_polyline_segments(
     assert "seg-1" in src
     assert "seg-2" in src
     assert "Unknown" not in src
+    # InfoWindow click handler must be wired up
+    assert "InfoWindow" in decoded_src
+    assert "addListener" in decoded_src
+    assert "click" in decoded_src
 
 
 def test_build_preview_map_src_includes_candidate_and_must_visit_payload():
@@ -40,3 +45,10 @@ def test_build_preview_map_src_includes_candidate_and_must_visit_payload():
     assert "museum-id" in decoded_src
     assert "selectedHotelPlaceId" in decoded_src
     assert "Cup Noodles Museum" in decoded_src
+    # InfoWindow click handler must be wired up
+    assert "InfoWindow" in decoded_src
+    assert "addListener" in decoded_src
+    # Category labels must be present
+    assert "目的地" in decoded_src
+    assert "住宿候補" in decoded_src
+    assert "必去景點" in decoded_src

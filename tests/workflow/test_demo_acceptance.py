@@ -50,7 +50,7 @@ class CountingAgents:
 
         return Proposal(candidates=[next(self._itineraries)])
 
-    def propose_food(self, places):
+    def propose_food(self, places, **kwargs):
         return FoodProposal(lunch_candidates=["Dotonbori Lunch"], dinner_candidates=[])
 
 
@@ -162,12 +162,13 @@ def test_preflight_trip_spec_keeps_selected_hotel_before_workflow(monkeypatch):
         pace_level=PaceLevel.RELAXED,
         route_mode=RouteMode.AUTO,
         walking_preference=WalkingPreference.NORMAL,
-        selected_hotel=PlaceStop(name="Hotel Monterey", place_id="hotel-1"),
         grounded_must_visit=[PlaceStop(name="Dotonbori", place_id="poi-1")],
         must_visit_name="Dotonbori",
         must_visit_price="0",
         must_visit_price_url="",
     )
+    # Simulate macro-phase hotel selection: inject the chosen hotel directly
+    trip_spec.hotel = PlaceStop(name="Hotel Monterey", place_id="hotel-1")
 
     workflow = TravelWorkflow(
         trip_spec=trip_spec,

@@ -3,7 +3,9 @@ tmp/
 .worktrees/
 .env
 .venv/
+.venv-win/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
 .streamlit/secrets.toml
+.claude/

@@ -35,10 +35,8 @@ def test_build_range_error_uses_currency_unit():
 
 
 def test_budget_specs_match_product_bounds():
-    from travel_planner.ui.app import DAYS_SPEC, LODGING_BUDGET_SPEC, TOTAL_BUDGET_SPEC
+    from travel_planner.ui.app import DAYS_SPEC, TOTAL_BUDGET_SPEC
 
     assert DAYS_SPEC == RangeFieldSpec(label="旅遊天數", minimum=1, maximum=10, step=1)
     assert TOTAL_BUDGET_SPEC.minimum == 1000
     assert TOTAL_BUDGET_SPEC.maximum == 300000
-    assert LODGING_BUDGET_SPEC.minimum == 0
-    assert LODGING_BUDGET_SPEC.maximum == 150000

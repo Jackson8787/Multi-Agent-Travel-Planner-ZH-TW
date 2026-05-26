@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sticky Map 驗證 — Travel Planner UI</title>
+<style>
+  /* ── Streamlit reset mimics ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Source Sans Pro", sans-serif; background: #fff; color: #31333f; }
+
+  /* ── Viewport toggle toolbar ── */
+  #toolbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: #262730; color: #fff; padding: 8px 16px;
+    display: flex; align-items: center; gap: 12px; font-size: 13px;
+  }
+  #toolbar button {
+    padding: 4px 12px; border: 1px solid #555; background: #333;
+    color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  #toolbar button.active { background: #ff4b4b; border-color: #ff4b4b; }
+  #checklist {
+    position: fixed; top: 44px; right: 12px; z-index: 99;
+    background: #f0f2f6; border: 1px solid #ccc; border-radius: 8px;
+    padding: 12px 16px; width: 280px; font-size: 13px; line-height: 1.8;
+  }
+  #checklist h3 { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  #checklist label { display: block; cursor: pointer; }
+  #checklist input { margin-right: 6px; }
+
+  /* ── Page wrapper (Streamlit-like) ── */
+  #page-wrapper {
+    margin-top: 44px;
+    padding: 1rem 1rem 4rem;
+    max-width: 1400px;
+  }
+
+  /* ── Streamlit horizontal block (flex row) ── */
+  [data-testid="stHorizontalBlock"] {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;   /* required for sticky to work */
+  }
+
+  /* ── Columns ── */
+  [data-testid="stColumn"] {
+    flex: 1;
+    min-width: 0;
+  }
+  [data-testid="stColumn"]:first-child { flex: 1; }
+  [data-testid="stColumn"]:last-child  { flex: 1.2; }
+
+  /* ── THE CSS UNDER TEST (copied verbatim from app.py) ── */
+  @media (min-width: 1024px) {
+    div[data-testid="stColumn"]:has(#sticky-map-anchor) {
+      position: sticky;
+      top: 1rem;
+      align-self: flex-start;
+    }
+  }
+
+  /* ── Left column: long form content ── */
+  .form-area {
+    background: #fafafa; border: 1px solid #e0e0e0;
+    border-radius: 8px; padding: 20px;
+  }
+  .form-field {
+    margin-bottom: 20px;
+  }
+  .form-field label {
+    display: block; font-size: 14px; font-weight: 600;
+    margin-bottom: 6px; color: #31333f;
+  }
+  .form-field input[type="range"],
+  .form-field input[type="number"],
+  .form-field input[type="text"],
+  .form-field textarea,
+  .form-field select {
+    width: 100%; padding: 8px 10px;
+    border: 1px solid #ccc; border-radius: 4px;
+    font-size: 14px; background: #fff;
+  }
+  .slider-row { display: flex; gap: 8px; align-items: center; }
+  .slider-row input[type="range"] { flex: 2; }
+  .slider-row input[type="number"] { flex: 1; width: 80px; }
+  .radio-group { display: flex; flex-direction: column; gap: 6px; }
+  .radio-group label { font-weight: normal; cursor: pointer; }
+  .hotel-card {
+    border: 2px solid #ff4b4b; border-radius: 6px; padding: 10px 14px;
+    margin-bottom: 8px; cursor: pointer; font-size: 13px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .hotel-card:not(.selected) { border-color: #e0e0e0; }
+  .hotel-card.selected { background: #fff5f5; }
+  .section-header {
+    font-size: 18px; font-weight: 700; margin: 24px 0 12px;
+    border-bottom: 2px solid #ff4b4b; padding-bottom: 6px;
+  }
+  .st-button {
+    background: #ff4b4b; color: #fff; border: none; padding: 10px 24px;
+    border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer;
+    margin-top: 20px; width: 100%;
+  }
+
+  /* ── Right column: map placeholder ── */
+  .map-placeholder {
+    background: #e8f0fe;
+    border: 2px dashed #4285f4;
+    border-radius: 8px;
+    height: 420px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #4285f4;
+    font-size: 14px;
+    gap: 8px;
+  }
+  .map-placeholder .map-icon { font-size: 48px; }
+  .sticky-badge {
+    display: inline-block;
+    background: #4CAF50; color: #fff;
+    font-size: 11px; font-weight: 700; padding: 2px 8px;
+    border-radius: 12px; letter-spacing: 0.5px;
+  }
+
+  /* ── Narrow viewport warning ── */
+  .narrow-warning {
+    display: none; background: #fff3cd;
+    border: 1px solid #ffc107; padding: 10px 16px;
+    border-radius: 6px; font-size: 13px; margin-bottom: 16px;
+  }
+  @media (max-width: 1023px) {
+    .narrow-warning { display: block; }
+  }
+
+  /* ── Narrow mode override via class (for toolbar button) ── */
+  body.force-narrow [data-testid="stHorizontalBlock"] {
+    flex-direction: column;
+  }
+  body.force-narrow div[data-testid="stColumn"]:has(#sticky-map-anchor) {
+    position: static !important;
+  }
+</style>
+</head>
+<body>
+
+<!-- Toolbar -->
+<div id="toolbar">
+  <span>🗺 Sticky Map 驗證頁</span>
+  <button id="btn-desktop" class="active" onclick="setMode('desktop')">桌面版 (&gt;1024px)</button>
+  <button id="btn-narrow" onclick="setMode('narrow')">窄版 (&lt;1024px)</button>
+  <button id="btn-approved" onclick="setApproved()">模擬：進入已核准日程</button>
+  <span style="margin-left: auto; opacity:.7; font-size:11px;">捲動左欄，觀察右側地圖是否固定</span>
+</div>
+
+<!-- Checklist -->
+<div id="checklist">
+  <h3>✅ 目視確認清單</h3>
+  <label><input type="checkbox"> 桌面版：捲動時右欄地圖固定不動</label>
+  <label><input type="checkbox"> 桌面版：只有右欄固定，左欄正常捲動</label>
+  <label><input type="checkbox"> 窄版：兩欄改為上下排列，地圖不固定</label>
+  <label><input type="checkbox"> 已核准模擬：版面切換後地圖不再固定（sticky 脫離）</label>
+  <label><input type="checkbox"> mobile：地圖顯示在表單下方</label>
+</div>
+
+<div id="page-wrapper">
+
+  <h1 style="font-size:28px; font-weight:800; margin-bottom:4px;">Multi-Agent Travel Planner</h1>
+  <p style="color:#888; font-size:13px; margin-bottom:24px;">Superpowers-guided verification workflow with live provider evidence.</p>
+
+  <div class="narrow-warning">
+    ⚠️ 目前視窗寬度不足 1024px，sticky 行為由 CSS media query 停用（這是預期行為）。
+  </div>
+
+  <!-- ── PREFLIGHT VIEW ── -->
+  <div id="preflight-view">
+    <div class="section-header">旅程需求</div>
+
+    <!-- Two-column layout replicating Streamlit structure -->
+    <div data-testid="stHorizontalBlock">
+
+      <!-- LEFT: Form -->
+      <div data-testid="stColumn">
+        <div class="form-area">
+
+          <div class="form-field">
+            <label>目的地</label>
+            <input type="text" value="Osaka" />
+          </div>
+
+          <div class="form-field">
+            <label>旅遊天數（1–10）</label>
+            <div class="slider-row">
+              <input type="range" min="1" max="10" value="5" />
+              <input type="number" min="1" max="10" value="5" style="width:70px" />
+            </div>
+          </div>
+
+          <div class="form-field">
+            <label>總預算 (NTD)（1,000–300,000）</label>
+            <div class="slider-row">
+              <input type="range" min="1000" max="300000" step="1000" value="25000" />
+              <input type="number" min="1000" max="300000" step="1000" value="25000" style="width:100px" />
+            </div>
+          </div>
+
+          <div class="form-field">
+            <label>住宿預算 (NTD)（0–150,000）</label>
+            <div class="slider-row">
+              <input type="range" min="0" max="150000" step="1000" value="8000" />
+              <input type="number" min="0" max="150000" step="1000" value="8000" style="width:100px" />
+            </div>
+          </div>
+
+          <div class="form-field">
+            <label>住宿候補</label>
+            <div class="hotel-card selected">
+              <input type="radio" name="hotel" checked /> 1. Hotel Monterey Osaka
+            </div>
+            <div class="hotel-card">
+              <input type="radio" name="hotel" /> 2. Cross Hotel Osaka
+            </div>
+            <div class="hotel-card">
+              <input type="radio" name="hotel" /> 3. Dormy Inn Namba Premium
+            </div>
+          </div>
+
+          <div class="form-field">
+            <label>自行指定住宿地點</label>
+            <input type="text" placeholder="（可空白）" />
+          </div>
+
+          <div class="form-field">
+            <label>交通方式</label>
+            <select>
+              <option>自動（先大眾運輸，失敗再駕車）</option>
+              <option>大眾運輸</option>
+              <option>駕車估算</option>
+            </select>
+          </div>
+
+          <div class="form-field">
+            <label>步行偏好</label>
+            <select>
+              <option>一般</option>
+              <option>偏好步行</option>
+              <option>僅短距離步行</option>
+            </select>
+          </div>
+
+          <div class="form-field">
+            <label>興趣</label>
+            <input type="text" value="anime, food" />
+          </div>
+
+          <div class="form-field">
+            <label>必去景點</label>
+            <textarea rows="2">Universal Studios Japan</textarea>
+          </div>
+
+          <div class="form-field">
+            <label>必去景點價格 (JPY)</label>
+            <input type="text" value="8600" />
+          </div>
+
+          <div class="form-field">
+            <label>必去景點官方價格 URL</label>
+            <input type="text" placeholder="https://..." />
+          </div>
+
+          <div class="form-field">
+            <label>旅遊節奏</label>
+            <div class="radio-group">
+              <label><input type="radio" name="pace"> 非常悠閒: 每天 1-2 個重點</label>
+              <label><input type="radio" name="pace" checked> 悠閒: 每天最多 2 個重點</label>
+              <label><input type="radio" name="pace"> 一般: 每天最多 3 個重點</label>
+              <label><input type="radio" name="pace"> 密集: 每天最多 4 個重點</label>
+            </div>
+          </div>
+
+          <div style="color: #28a745; background: #d4edda; border-radius:6px; padding:10px; font-size:13px; margin-bottom:12px;">
+            ✅ 已選住宿：Hotel Monterey Osaka
+          </div>
+
+          <button class="st-button">開始規劃</button>
+        </div>
+      </div>
+
+      <!-- RIGHT: Map (sticky target) -->
+      <div data-testid="stColumn">
+        <div id="sticky-map-anchor"></div>
+        <h3 style="font-size:16px; font-weight:700; margin-bottom:12px;">地圖預覽</h3>
+        <div class="map-placeholder">
+          <div class="map-icon">🗺</div>
+          <strong>互動地圖</strong>
+          <div style="font-size:12px; color:#6c8ebf;">Osaka • Hotel Monterey • USJ</div>
+          <div class="sticky-badge">STICKY</div>
+          <div style="font-size:11px; margin-top:8px; color:#5c7caa;">
+            捲動左欄時此區塊應保持固定
+          </div>
+        </div>
+        <div style="font-size:12px; color:#888; margin-top:8px; padding: 0 4px;">
+          輸入目的地後，這裡會顯示城市、住宿候補與必去景點預覽。
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── APPROVED ITINERARY VIEW (initially hidden) ── -->
+  <div id="approved-view" style="display:none;">
+    <div class="section-header" style="color:#28a745; border-color:#28a745;">已核准日程</div>
+    <p style="color:#555; font-size:14px; margin-bottom:16px;">
+      ⚠️ 此時 sticky-map-anchor 不存在於此頁面。右欄地圖應恢復正常文件流（非 sticky）。
+    </p>
+
+    <div style="display:flex; gap:1rem;">
+      <div style="flex:1; background:#f0fff4; border:1px solid #c3e6cb; border-radius:8px; padding:20px;">
+        <h3 style="font-size:16px; margin-bottom:12px;">✅ 已核准日程（第 1 天）</h3>
+        <div style="display:flex; gap:12px; margin-bottom:16px;">
+          <div style="text-align:center; flex:1; background:#fff; border-radius:6px; padding:12px;">
+            <div style="font-size:22px; font-weight:700;">68</div>
+            <div style="font-size:12px; color:#666;">必要移動（分）</div>
+          </div>
+          <div style="text-align:center; flex:1; background:#fff; border-radius:6px; padding:12px;">
+            <div style="font-size:22px; font-weight:700;">28</div>
+            <div style="font-size:12px; color:#666;">最長單段（分）</div>
+          </div>
+          <div style="text-align:center; flex:1; background:#fff; border-radius:6px; padding:12px;">
+            <div style="font-size:22px; font-weight:700;">3.1</div>
+            <div style="font-size:12px; color:#666;">步行距離（km）</div>
+          </div>
+        </div>
+        <div style="font-size:13px; color:#666; margin-bottom:12px;">
+          交通方式：自動（先大眾運輸，失敗再駕車）｜步行偏好：一般
+        </div>
+        <div style="background:#fff3cd; border:1px solid #ffc107; border-radius:6px; padding:10px; font-size:13px; margin-bottom:12px;">
+          ⚠️ 此段無可取得的大眾運輸路線，已改用駕車估算。路線時間僅供參考，實際通勤時間請另行確認。
+        </div>
+        <button class="st-button" style="background:#0068c9;">規劃第 2 天</button>
+      </div>
+      <div style="flex:1.2;">
+        <div class="map-placeholder" style="background:#e8f4ff; border-color:#0068c9;">
+          <div class="map-icon">🗺</div>
+          <strong>已驗證路線地圖</strong>
+          <div style="font-size:12px; color:#0068c9;">非 sticky — 正常文件流</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function setMode(mode) {
+  document.getElementById('btn-desktop').classList.toggle('active', mode === 'desktop');
+  document.getElementById('btn-narrow').classList.toggle('active', mode === 'narrow');
+  document.body.classList.toggle('force-narrow', mode === 'narrow');
+}
+
+function setApproved() {
+  const pre = document.getElementById('preflight-view');
+  const apv = document.getElementById('approved-view');
+  const isApproved = apv.style.display !== 'none';
+  pre.style.display = isApproved ? 'block' : 'none';
+  apv.style.display = isApproved ? 'none' : 'block';
+  document.getElementById('btn-approved').textContent =
+    isApproved ? '模擬：進入已核准日程' : '模擬：回到 Preflight 表單';
+}
+</script>
+</body>
+</html>
