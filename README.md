@@ -1,19 +1,75 @@
 # Multi-Agent Travel Planner
 
-> 基於大型語言模型 (LLM) 與多代理人 (Multi-Agent) 協作的智能旅遊規劃系統。
+Superpowers-guided Osaka travel planning demo with typed trip state, a left-form/right-map preflight UI, verification gates, and human decisions for pace and budget conflicts.
 
-## 專案簡介 (About The Project)
+## Setup
 
-**Multi-Agent Travel Planner** 是一個整合了多個專精領域 AI Agent 的自動化旅遊規劃服務。傳統的單一 LLM 往往難以在嚴格的預算、交通時間與特定偏好下，排出典型的完美行程。本專案透過「分工協作」與「自我審查」機制，將複雜的規劃任務拆解，確保最終產出的行程具備高度的可行性與客製化水準。
+1. Create a virtual environment and install dependencies.
+2. Copy `.env.example` to `.env`.
+3. Fill in Google Maps, ExchangeRate-API, Azure OpenAI, and optional Langfuse credentials.
+4. Start the app:
 
-本專案同時整合了 LLM 觀察與評估工具 (LLM Observation & Evaluation tools)，讓開發者能清晰分析不同 AI Agent 及外部工具 (Tool Calling) 的調用狀態與執行條件。
+```bash
+python -m streamlit run src/travel_planner/ui/app.py
+```
 
-## 核心功能與 Agent 架構 (Core Features & Architecture)
+## Required Environment Variables
 
-系統內部由五個核心 Agent 組成管線 (Pipeline)，彼此傳遞狀態與記憶：
+```dotenv
+GOOGLE_MAPS_API_KEY=
+EXCHANGE_RATE_API_KEY=
+AZURE_OPENAI_API_KEY=
+AZURE_OPENAI_ENDPOINT=
+AZURE_OPENAI_DEPLOYMENT=
+AZURE_OPENAI_API_VERSION=2024-10-21
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+LANGFUSE_HOST=https://cloud.langfuse.com
+```
 
-* **行程 Agent (Schedule Agent):** 負責整體時間軸規劃與景點排序，確保行程流暢。
-* **預算 Agent (Budget Agent):** 嚴格控管總花費，動態分配住宿、門票與餐飲開銷，防止超支。
-* **交通 Agent (Transportation Agent):** 計算景點間的最佳移動方式與交通時間。
-* **美食 Agent (Food Agent):** 根據使用者的自訂標籤（如：動漫、在地小吃、素食）進行精準推薦。
-* **檢查 Agent (Critic Agent / Evaluator):** 擔任內部審查員。若發現「預算超支」或「行程太滿導致疲勞」，會觸發反饋循環 (Feedback Loop)，要求其他 Agent 重新調整方案。
+## Data Provenance
+
+- Places and restaurant grounding: Google Places API (New).
+- Route duration, encoded polyline, walking distance, and available transit fare: Google Routes API.
+- Currency conversion snapshot: ExchangeRate-API. Converted TWD amounts are budget estimates, not card settlement totals.
+- Admission and lodging exact costs: user-confirmed official URLs.
+- Agent output: Azure OpenAI suggestions. These are never treated as verified facts without tool verification.
+
+The centralized provider registry for display metadata and maintenance lives at:
+
+- `src/travel_planner/integrations/api_registry.py`
+
+## Demo Workflow
+
+1. Enter destination, travel days, total budget, and lodging budget through synced slider/input controls.
+2. Review the right-side preview map as destination, hotel candidates, and must-visit places resolve.
+3. Select one hotel candidate from the left panel.
+4. Start itinerary planning with the selected hotel and any grounded must-visit places.
+5. Generate itinerary candidates through the itinerary agent and verify places plus routes through Google APIs.
+6. Pause for user decisions when pace or budget conflicts occur.
+7. Approve only verified day plans and display evidence plus the verified route map.
+
+## Verification Commands
+
+Run the deterministic suite:
+
+```bash
+python -m pytest -q
+```
+
+Run live smoke checks with configured credentials:
+
+```bash
+python -m pytest -m live_api tests/live -q
+```
+
+Run Ruff:
+
+```bash
+ruff check src tests
+```
+
+## Notes
+
+- The app uses verified place IDs and encoded polylines when rendering the route map; it does not draw maps from unverified place names.
+- If Streamlit is not installed in the current Python environment, the formatter tests still import successfully, but the UI itself will not render until Streamlit is installed.
