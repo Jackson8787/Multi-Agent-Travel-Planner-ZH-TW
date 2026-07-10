@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-import sys as _sys, pathlib as _pathlib
+import pathlib as _pathlib
+import sys as _sys
 
 # Ensure the src directory is in sys.path regardless of how Streamlit launches this script.
 # Streamlit may pre-load a stale version of travel_planner (e.g. from a git worktree's
@@ -65,6 +66,7 @@ except ModuleNotFoundError:  # pragma: no cover - import fallback for unit tests
 from travel_planner.agents.runner import IntentParseResult, LiveAgentSuite
 from travel_planner.config import Settings
 from travel_planner.domain.models import (
+    ConflictEvent,
     ConflictType,
     DayPlanState,
     DestinationLeg,
@@ -1545,7 +1547,6 @@ def _render_phase0_chat(settings: Settings) -> None:
             missing.append("旅遊天數")
         if not params.get("budget_amount"):
             missing.append("預算")
-        q = "、".join(missing)
         if missing:
             st.session_state[SESSION_CHAT_HISTORY].append({
                 "role": "assistant",
@@ -1962,7 +1963,7 @@ def _build_approved_chat_message(
 
     total = workflow.trip_spec.total_days
     if _can_plan_next_day(current_day=day, total_days=total):
-        lines.append(f"\n請選擇：")
+        lines.append("\n請選擇：")
         lines.append(f"1. ▶️ 繼續規劃第 {day + 1} 天")
         lines.append("（直接輸入數字或「下一天」均可）")
     else:
@@ -2127,7 +2128,6 @@ def _handle_phase12_chat_input(
         candidates: list[str] = getattr(seg, "hotel_candidates", []) if seg else []
 
         # "5" or vague = random selection; "4" = custom (needs actual name → fall through to text)
-        vague_triggers = ("隨便", "都可以", "你決定", "幫我選", "5", "random", "任何", "無所謂")
         if low in ("5",) or any(tr in low for tr in ("隨便", "都可以", "你決定", "幫我選", "random", "任何", "無所謂")):
             hotel_name = candidates[0] if candidates else None
         elif low == "4":
@@ -2158,8 +2158,6 @@ def _handle_phase12_chat_input(
     if status is WorkflowStatus.AWAITING_DUPLICATE_DECISION:
         conflict = result.conflict
         name = conflict.evidence.get("duplicate_place_name", "此地點") if conflict else "此地點"
-        allow_triggers = ("1", "是", "再", "好", "ok", "造訪", "一樣", "再去", "重複", "沒關係", "可以")
-        reject_triggers = ("2", "換", "不", "no", "替換", "拒絕", "不去", "另一個")
         if low == "1" or any(tr in low for tr in ("是", "再去", "造訪", "沒關係", "再", "ok")):
             _resume_with_chat_update(
                 workflow, UserDecision(choice=UserChoice.ALLOW_REVISIT),
@@ -2185,9 +2183,6 @@ def _handle_phase12_chat_input(
 
     # ── AWAITING_PACE_DECISION ────────────────────────────────────────────
     if status is WorkflowStatus.AWAITING_PACE_DECISION:
-        replan_triggers = ("1", "重新", "換景點", "replan", "換", "調整景點")
-        accept_triggers = ("2", "接受", "沒關係", "ok", "好", "可以", "累點沒關係", "算了")
-        raise_triggers = ("3", "加快", "一般", "調整節奏", "提升", "一般模式")
         if low == "1" or any(tr in low for tr in ("重新", "換景點", "換", "調整景點", "replan")):
             _resume_with_chat_update(
                 workflow, UserDecision(choice=UserChoice.KEEP_PACE_REPLAN),
@@ -2308,7 +2303,6 @@ def _handle_phase12_chat_input(
     # ── NEEDS_MANUAL_REVIEW ───────────────────────────────────────────────
     if status is WorkflowStatus.NEEDS_MANUAL_REVIEW:
         back_triggers = ("2", "返回", "上一天", "回去", "back")
-        replan_triggers = ("1", "重新規劃", "重新", "換景點", "換")
         day = result.day_state.day if result.day_state else 1
         prev_day_num = day - 1
 

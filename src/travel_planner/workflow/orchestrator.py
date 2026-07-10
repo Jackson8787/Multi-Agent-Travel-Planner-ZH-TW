@@ -168,8 +168,8 @@ class _FixtureAgents:
                     ],
                     hotel_descriptions=[
                         f"位於 {city} 市中心，交通便利，適合觀光。",
-                        f"價格實惠，靠近主要景點，性價比高。",
-                        f"精品風格，提供舒適住宿體驗。",
+                        "價格實惠，靠近主要景點，性價比高。",
+                        "精品風格，提供舒適住宿體驗。",
                     ],
                     key_places=[f"{city} 代表景點 A", f"{city} 代表景點 B"],
                     food_picks=[f"{city} 特色料理"],
@@ -1076,7 +1076,7 @@ class TravelWorkflow:
                 and self.current_day.route.legs
             ):
                 worst = max(
-                    self.current_day.route.legs, key=lambda l: l.duration_minutes
+                    self.current_day.route.legs, key=lambda leg: leg.duration_minutes
                 )
                 worst_idx = self.current_day.route.legs.index(worst)
                 all_stops = (

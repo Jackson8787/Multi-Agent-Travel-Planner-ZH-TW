@@ -7,7 +7,7 @@ from openai import LengthFinishReasonError, OpenAI
 from pydantic import BaseModel, Field
 
 from travel_planner.config import Settings
-from travel_planner.domain.models import DayPlanState, MacroCitySegment, PlaceStop, SlotType, TimeSlot
+from travel_planner.domain.models import DayPlanState, MacroCitySegment, PlaceStop, TimeSlot
 
 
 class ItineraryProposal(BaseModel):

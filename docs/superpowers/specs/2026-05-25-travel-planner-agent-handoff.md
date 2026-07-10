@@ -1,279 +1,100 @@
 # Multi-Agent Travel Planner Agent Handoff
 
-Date: 2026-05-25
+Last updated: 2026-07-10
 
-This document is for the next agent taking over the project.
+這份文件提供給下一位接手本專案的開發者或 Agent。GitHub repository：
+`https://github.com/Rlonglong/Multi-Agent-Travel-Planner`
 
-## 1. Project State
+## 目前狀態
 
-- Repository root: `/Users/mumi/文件/多 Agent 旅遊規劃系統`
-- Active branch: `main`
-- Current committed HEAD: `3aad0b4` `test: verify travel planner preflight UI workflow`
-- There are important **uncommitted** local changes on top of `main`.
+- 主要分支：`main`
+- Python：3.12
+- 套件與環境：`uv`、`uv.lock`
+- Web UI：Streamlit
+- 完整依賴可由根目錄 `run.sh` / `run.ps1` 自動準備。
+- `.env`、`.streamlit/secrets.toml`、`.venv`、`.worktrees` 均不得提交。
 
-Current working tree status:
+## 已完成功能
 
-```text
- M src/travel_planner/agents/runner.py
- M src/travel_planner/domain/models.py
- M src/travel_planner/integrations/google_routes.py
- M src/travel_planner/ui/app.py
- M src/travel_planner/workflow/orchestrator.py
- M tests/agents/test_runner.py
- M tests/integrations/test_google_routes.py
- M tests/ui/test_view_models.py
- M tests/workflow/test_demo_acceptance.py
- M tests/workflow/test_orchestrator.py
-```
+- 文字需求解析與多城市 macro plan。
+- 各城市住宿候補、手動住宿選擇與地圖預覽。
+- 行程、美食、檢查 Agent 的結構化輸出。
+- 必去景點鎖定、跨日已訪景點追蹤與重複景點決策。
+- Google Places grounding 與逐段 Google Routes 驗證。
+- `TRANSIT`、`DRIVE`、`AUTO` 路線模式；AUTO 可 fallback 至駕車估算並在 UI 顯示警告。
+- 四級旅遊節奏與 deterministic pace gate。
+- `NORMAL`、`PREFER_WALKING`、`SHORT_WALK_ONLY` 步行偏好，已接入確定性驗證。
+- 預算、價格區間、JPY/TWD 匯率快照與來源證據。
+- 節奏、預算、價格缺漏、人工覆核等 human-in-the-loop 決策。
+- 多日進度、已完成日程摘要、返回前一天與繼續下一天。
+- 完整行程 PDF 下載。
+- Langfuse tracing 與 live API smoke tests。
 
-These local changes are tested and currently passing, but have **not** been committed yet.
-
-## 2. Verified Current Test State
-
-The latest local state was verified with:
-
-```bash
-PYTHONPATH=src .worktrees/feature-travel-planner-mvp/.venv/bin/python -m pytest -q
-PYTHONPATH=src .worktrees/feature-travel-planner-mvp/.venv/bin/python -m ruff check src tests README.md
-```
-
-Latest result:
-
-- `pytest -q` -> `99 passed, 5 skipped`
-- `ruff check` -> passed
-
-## 3. Runtime / Launch Instructions
-
-Important environment note:
-
-- The reusable virtualenv lives at:
-  `/Users/mumi/文件/多 Agent 旅遊規劃系統/.worktrees/feature-travel-planner-mvp/.venv`
-- To avoid old editable-install path issues, always launch from repo root with:
-  - `PYTHONPATH=src`
-
-Recommended launch command:
+## 啟動方式
 
 ```bash
-cd "/Users/mumi/文件/多 Agent 旅遊規劃系統"
-set -a
-source .worktrees/feature-travel-planner-mvp/.env
-set +a
-export LANGFUSE_HOST="https://jp.cloud.langfuse.com"
-PYTHONPATH=src .worktrees/feature-travel-planner-mvp/.venv/bin/python -m streamlit run src/travel_planner/ui/app.py --server.port 8502 --server.headless true
+cp .env.example .env
+# 填入必要 API credentials
+./run.sh
 ```
 
-The app has been running successfully on:
+預設網址：`http://localhost:8502`
 
-- [http://localhost:8502](http://localhost:8502)
-
-## 4. What Has Been Added Since `3aad0b4`
-
-### 4.1 Preflight UX and map workflow
-
-Implemented in local changes:
-
-- left form + right preview map layout
-- destination preview on map
-- hotel candidate preview on map
-- must-visit preview on map
-- manual hotel override input
-- budget/day controls as synced slider + number input
-
-Main file:
-
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/ui/app.py`
-
-### 4.2 Trip planning correctness fixes
-
-Implemented in local changes:
-
-- `must_visit` is now treated as locked input to daily planning
-- itinerary agent receives:
-  - `must_visit`
-  - `remaining_slots`
-  - `route_mode`
-  - `walking_preference`
-- planner no longer blindly replaces a preview-grounded must-visit with a different-city variant
-
-Main files:
-
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/agents/runner.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/workflow/orchestrator.py`
-
-### 4.3 OpenAI structured runner resilience
-
-Implemented in local changes:
-
-- Azure structured LLM call now handles SDK parameter compatibility
-- retries after `LengthFinishReasonError`
-- uses smaller JSON-only retry prompt on retry
-
-Main file:
-
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/agents/runner.py`
-
-### 4.4 Route validation fallback
-
-Implemented in local changes:
-
-- `TRANSIT` route mode remains primary
-- when `TRANSIT` returns empty routes, `AUTO` falls back to `DRIVE`
-- route evidence marks:
-  - `Google Routes API`
-  - or `Google Routes API (drive fallback)`
-
-Main file:
-
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/integrations/google_routes.py`
-
-### 4.5 Workflow visibility fix
-
-Implemented in local changes:
-
-- UI no longer labels all workflow stages as `完成`
-- manual review now shows the actual blocking stage/reason
-
-Main file:
-
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/ui/app.py`
-
-### 4.6 New route preference controls
-
-Implemented in local changes:
-
-- added `RouteMode`
-  - `TRANSIT`
-  - `DRIVE`
-  - `AUTO`
-- added `WalkingPreference`
-  - `NORMAL`
-  - `PREFER_WALKING`
-  - `SHORT_WALK_ONLY`
-
-Main files:
-
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/domain/models.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/ui/app.py`
-
-### 4.7 Multi-day navigation
-
-Implemented in local changes:
-
-- when a day reaches `DAY_APPROVED` and there are remaining trip days, UI now shows:
-  - `規劃第 N 天`
-
-Main file:
-
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/ui/app.py`
-
-## 5. Current Open Work / Known Gaps
-
-These items are not fully finished, even though the current code passes tests:
-
-### 5.1 Sticky map needs browser-level verification
-
-The map column was made sticky via CSS anchored in `app.py`, but it has not yet been visually verified across enough scroll cases in the in-app browser.
-
-What to check:
-
-- desktop viewport
-- mobile/narrow viewport behavior
-- whether only the intended right-side column becomes sticky
-- whether sticky behavior breaks after the app transitions from preflight to approved itinerary view
-
-### 5.2 Route mode UI is wired, but walking preference is only prompt-level today
-
-Current state:
-
-- `route_mode` affects real routing
-- `walking_preference` is stored and passed to the itinerary prompt
-
-Not yet done:
-
-- no deterministic validator behavior change based on `walking_preference`
-- no explicit filtering logic yet such as:
-  - prefer shorter walking links
-  - reject walking distance over stricter thresholds
-
-### 5.3 Final UI wording for drive fallback warning
-
-`source_provider` is already marked as `Google Routes API (drive fallback)`, but the UI does not yet surface a strong user-facing warning like:
-
-> 此段無可取得的大眾運輸路線，已改用駕車估算。
-
-This should likely be added near route evidence and/or warnings.
-
-### 5.4 Day-to-day state is basic
-
-Current multi-day flow supports advancing to the next day, but does not yet provide:
-
-- a summary of completed days
-- visited-place carryover beyond current workflow assumptions
-- a strong end-of-trip summary view
-
-The button-level flow exists; the broader trip progress UX still needs refinement.
-
-## 6. Files Most Relevant for Continued Work
-
-Primary implementation files:
-
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/ui/app.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/ui/map_component.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/integrations/google_routes.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/agents/runner.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/workflow/orchestrator.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/src/travel_planner/domain/models.py`
-
-Primary tests:
-
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/tests/ui/test_view_models.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/tests/integrations/test_google_routes.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/tests/agents/test_runner.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/tests/workflow/test_orchestrator.py`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/tests/workflow/test_demo_acceptance.py`
-
-Specs and plans already written:
-
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/docs/superpowers/specs/2026-05-24-multi-agent-travel-planner-superpowers-design.md`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/docs/superpowers/specs/2026-05-25-travel-planner-ui-and-hotel-selection-design.md`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/docs/superpowers/plans/2026-05-24-multi-agent-travel-planner-mvp.md`
-- `/Users/mumi/文件/多 Agent 旅遊規劃系統/docs/superpowers/plans/2026-05-25-travel-planner-ui-and-hotel-selection-implementation.md`
-
-## 7. Recommended Next Actions for the Next Agent
-
-Recommended order:
-
-1. Commit the current tested local changes as one coherent checkpoint.
-2. Open the app in the in-app browser and verify:
-   - sticky map behavior
-   - route mode selectbox
-   - walking preference selectbox
-   - next-day button after successful approval
-3. Add explicit UI warning for `drive fallback`.
-4. Decide whether `walking_preference` should affect:
-   - only prompts
-   - or deterministic pace/route validation too
-5. Improve end-of-trip multi-day UX if the product demo requires it.
-
-## 8. Safe Commit Boundary
-
-The current uncommitted changes already form a coherent checkpoint:
-
-- route mode support
-- walking preference model + UI
-- sticky map CSS
-- next-day button
-- prior fixes for:
-  - must-visit lock-in
-  - route fallback
-  - LLM retry compatibility
-  - manual review explanation
-
-If the next agent wants to continue cleanly, the first action should be:
+已有 `.venv` 時：
 
 ```bash
-git add src tests
-git commit -m "feat: improve planner controls and day progression"
+./run_quick.sh
 ```
 
-That commit message is only a suggestion; the important point is to checkpoint before further UI work.
+Windows：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run.ps1
+```
+
+## 驗證方式
+
+```bash
+uv sync --extra dev
+uv run pytest -q
+uv run ruff check src tests README.md
+```
+
+真實 API：
+
+```bash
+set -a; source .env; set +a
+uv run pytest -m live_api tests/live -q
+```
+
+2026-07-10 最後驗證結果：
+
+- deterministic tests：`125 passed, 5 skipped`
+- live API smoke tests：`5 passed`
+- Ruff：passed
+- Streamlit startup：`HTTP 200` on port 8502
+
+## 主要程式位置
+
+- `src/travel_planner/ui/app.py`：Streamlit UI、對話流程、決策與跨日呈現。
+- `src/travel_planner/ui/map_component.py`：預覽地圖與已驗證路線。
+- `src/travel_planner/ui/pdf_generator.py`：完整行程 PDF。
+- `src/travel_planner/workflow/orchestrator.py`：macro/micro workflow、gate、重試與跨日狀態。
+- `src/travel_planner/agents/runner.py`：Azure OpenAI 結構化 Agent runner。
+- `src/travel_planner/domain/models.py`：TripSpec、路線、價格、時段與決策模型。
+- `src/travel_planner/integrations/`：Places、Routes、匯率與 provider registry。
+- `src/travel_planner/validation/`：預算與 pace 規則。
+- `tests/`：domain、integration、workflow、UI 與 live tests。
+
+## 已知限制
+
+- Google Routes 不保證所有大眾運輸路段都有結果或票價；AUTO fallback 僅為估算。
+- Google Places 的餐廳價格通常是級距，不是最終消費金額。
+- 住宿與門票精確價格仍可能需要使用者依官方來源確認。
+- 匯率換算是預算快照，不代表刷卡或現金換匯成交價。
+- 真實 LLM/API 的輸出會受服務狀態、配額、區域與模型部署影響。
+- UI 已具備 sticky map 驗證頁 `docs/verify-sticky-map.html`，正式展示前仍建議以實際瀏覽器跑一次完整流程。
+
+## 接手建議
+
+接手後先執行測試與啟動 smoke test，再開始功能修改。維持目前責任邊界：LLM 負責提案與解釋，外部 API 負責事實驗證，程式規則負責預算與節奏判定。新增 API 時，來源、用途與限制應同步登記於 `api_registry.py`，secret 只能放在 `.env`。

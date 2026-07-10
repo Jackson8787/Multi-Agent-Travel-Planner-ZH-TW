@@ -30,3 +30,6 @@ markers = ["live_api: requires real external API credentials"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint.per-file-ignores]
+"src/travel_planner/ui/app.py" = ["E402"]
