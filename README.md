@@ -146,6 +146,3 @@ tests/              單元、整合、workflow 與 live smoke tests
 docs/               架構、規格與實作計畫
 ```
 
-## 安全提醒
-
-若 API key 或 GitHub token 曾貼到聊天、Issue、commit 或公開頁面，請立刻撤銷並重新產生。不要把 secret 寫進 README、程式碼、測試資料或 Git 歷史。
